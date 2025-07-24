@@ -1,0 +1,18 @@
+<launch>
+
+	<group ns="drone0">
+	<node pkg="px4ctrl" type="px4ctrl_node" name="px4ctrl" output="screen">
+		<remap from="~odom" to="vins_fusion/imu_propagate" />
+
+		<remap from="~cmd" to="position_cmd" />
+
+        <rosparam command="load" file="$(find px4ctrl)/config/ctrl_param_fpv.yaml" />
+	</node>
+	<include file="$(find mavros)/launch/px4.launch">
+	</include>
+	</group>
+
+    <!-- <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+		<arg name="camera" value="drone0" />
+	</include>  -->
+</launch>

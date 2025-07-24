@@ -1,0 +1,17 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[remote "origin"]
+	url = git@github.com:zyayoung/fast-drone-250.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "master"]
+	remote = origin
+	merge = refs/heads/master
+[branch "emitter_on_off"]
+	remote = origin
+	merge = refs/heads/emitter_on_off
+[user]
+	name = Ukiha35
+	email = timliu35@outlook.com

@@ -1,0 +1,3 @@
+<launch>
+  <node name="flow_publisher_node" pkg="flow_publisher" type="flow_publisher_node" output="screen" />
+</launch>

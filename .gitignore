@@ -1,0 +1,7 @@
+build
+devel
+ceres-solver-2.0.0rc1
+.vscode
+.catkin_workspace
+src/CMakeLists.txt
+*.bag

@@ -1,0 +1,5 @@
+<library path="lib/libread">
+  <class name="read/read" type="image::read" base_class_type="nodelet::Nodelet">
+    <description></description>
+  </class>
+</library>

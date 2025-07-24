@@ -1,0 +1,10 @@
+<launch>
+    <!-- 启动Nodelet管理器 -->
+    <node pkg="nodelet" type="nodelet" name="nodelet_manager" output="screen" args="manager"/>
+
+    <!-- 启动read Nodelet -->
+    <node pkg="nodelet" type="nodelet" name="read" output="screen"
+          args="load read/read nodelet_manager">
+    </node>
+
+</launch>

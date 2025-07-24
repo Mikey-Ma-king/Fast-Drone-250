@@ -1,0 +1,7 @@
+<launch>
+  <!-- 启动 traj_server 节点 -->
+  <node name="traj_server" pkg="planning" type="planning" output="screen" />
+
+  <!-- 如果需要参数，可以在这里加载 -->
+  <!-- <param name="param_name" value="xxx" /> -->
+</launch>

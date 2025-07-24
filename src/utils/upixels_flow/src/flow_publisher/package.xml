@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>flow_publisher</name>
+  <version>0.0.0</version>
+  <description>The flow_publisher package</description>
+
+  <maintainer email="pc@todo.todo">pc</maintainer>
+
+  <license>MIT</license>
+
+  <!-- 依赖项 -->
+  <buildtool_depend>catkin</buildtool_depend>
+  
+  <build_depend>roscpp</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>message_generation</build_depend>
+
+  <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>std_msgs</build_export_depend>
+
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>message_runtime</exec_depend>
+
+  <export>
+    <!-- 其他工具可以在这里添加 -->
+  </export>
+</package>
