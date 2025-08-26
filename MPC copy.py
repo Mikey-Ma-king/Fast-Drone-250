@@ -28,7 +28,7 @@ vins_p =np.array([0.0,0.0,0.0])
 vins_v =np.array([0.0,0.0,0.0])
 vins_yaw = 0
 
-land_height_limit = [1.5, 2.0]
+land_height_limit = [1.0, 2.0]
 land_target_z = 0.0
 
 class TargetFilter:
@@ -105,7 +105,7 @@ class all_Subscriber:
         # target_yaw = self.target_filter.filtered_yaw
         target_yaw = msg.pose.pose.orientation.w
         target_p[0] = msg.pose.pose.position.x
-        target_p[1] = msg.pose.pose.position.y
+        target_p[1] = msg.pose.pose.position.y + 0.1
         # if (land_triger == 1 and land_target_z == 0.0):
         #     land_target_z = self.target_filter.filtered_pos[2]
         # if (land_target_z != 0.0):
@@ -378,19 +378,19 @@ def run_while_loop():
         else:
             target_p_dis[0] = target_p[0]
             target_p_dis[1] = target_p[1]
-            target_p_dis[2] = max(target_p[2] - 10.0, land_height - 0.4*(time.time() - land_time))
+            target_p_dis[2] = max(-10.0, land_height - 0.2*(time.time() - land_time))
 
-        if x_opt is not None:
+        if (land_triger == 0 and x_opt is not None or (land_triger == 1 and x_opt is not None and land_init_ == 1)):
             drone_state,accel = traj_get_state(x_opt, u_opt, int((time.time() - MPC_clcyle + shift)/mpc.dt)*mpc.dt, mpc.dt)
+            # drone_state = np.array([vins_p[0], vins_p[1], vins_p[2], vins_v[0], vins_v[1], vins_v[2]])
         else :
+            if (land_triger == 1 and land_init_ == 0):
+                land_init_ = 1
+                land_time = time.time()
+                land_height = vins_p[2]
+                # mpc.v_max = np.array([1.2, 1.2, 0.8])
             drone_state = np.array([vins_p[0], vins_p[1], vins_p[2], vins_v[0], vins_v[1], vins_v[2]])
-        
-        if (land_triger == 1 and land_init_ == 0):
-            land_init_ = 1
-            land_time = time.time()
-            land_height = vins_p[2]
-            # mpc.v_max = np.array([1.2, 1.2, 0.8])        
-            
+            # drone_state = np.array([vins_p[0], vins_p[1], vins_p[2], vins_v[0], vins_v[1], vins_v[2]])
         # print("time.time() - MPC_clcyle:",time.time() - MPC_clcyle)
         # print("drone_state:",drone_state)
         # print("x_opt:",x_opt)
@@ -402,7 +402,7 @@ def run_while_loop():
         #     target_p_dis = 0.3*last_last_target_p_dis + 0.4*last_target_p_dis + 0.3*target_p_dis
         #     last_last_target_p_dis = last_target_p_dis
         #     last_target_p_dis = target_p_dis
-        max_dis = 1.2 + land_triger*0.0
+        max_dis = 1.2 + land_triger*0.2
         if (abs(target_p_dis[0] - vins_p[0]) > max_dis) : 
             target_p_dis[0] = max_dis*(target_p_dis[0] - vins_p[0])/abs(target_p_dis[0] - vins_p[0]) + vins_p[0]
         if (abs(target_p_dis[1] - vins_p[1]) > max_dis) :

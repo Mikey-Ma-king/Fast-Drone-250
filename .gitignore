@@ -5,3 +5,4 @@ ceres-solver-2.0.0rc1
 .catkin_workspace
 src/CMakeLists.txt
 *.bag
+*.jpg

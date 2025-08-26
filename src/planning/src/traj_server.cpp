@@ -41,16 +41,29 @@ bool triger_received_ = false;
 bool land_triger_received_ = false;
 bool stop_triger_received_ = false; 
 Eigen::Vector3d vins_p{0,0,0},vins_v{0,0,0};
-Eigen::Vector3d target_p{0,0,0},target_v{0,0,0};
 double vins_yaw = 0;
-double last_target_yaw = 0;
-double target_yaw = 0;
+// double last_target_yaw = 0;
+// double target_yaw = 0;
 
-bool target_receive = false;
+Eigen::Vector3d target_p{0,0,0},target_v{0,0,0};
 double target_dog_yaw = 0;
+int last_target_timer = 0;
+int target_count = 0;
+int last_target_count = 0;
+bool target_receive = false;
+
+// dog_pos 相关变量（只保留速度信息）
+Eigen::Vector3d hc14_dog_vel{0,0,0};
+bool hc14_dog_pos_received = false;
+int hc14_dog_pos_count = 0;
+int last_hc14_dog_pos_count = 0;
+int last_hc14_dog_pos_timer = 0;  // dog_pos专用的timer
+
 double kp = 1.2;
 double tracking_dist_ = 1.5;
 double landtriger = 0;
+double target_receive_triger = 0;
+ros::Time target_lost_time;
 
 double AOA_x = 10;
 double AOA_w = 0;
@@ -77,6 +90,25 @@ double last_error_mpcz = 0;
 
 int target_land_flag = 0;
 
+double x_p = 0.3;
+double x_i = 0.5;
+double x_d = 3.0;
+double x_d_max = 0.25;
+double vx_offset = 0.0;
+
+double y_p = 0.15;
+double y_i = 0.0;
+double y_d = 0.0;
+double y_d_max = 0.12;
+double vy_offset = 0.0;
+
+double z_p = 0.3;
+double z_i = 0.3;
+double z_d = 1.8;
+double z_d_max = 0.12;
+double vz_offset = 0.0;
+
+
 std::vector<Eigen::Vector3d> target_p_list,target_v_list;
 
 ros::Time traj_start_time;
@@ -91,6 +123,7 @@ int BPNN_count = 60;
 ros::Time traj_sub_time;
 
 double land_count = 0;
+double reset_target_count = 0;
 
 // 参数定义
 const double blsc_lambda = 1.2;          // 平衡收敛速度与稳定性
@@ -553,17 +586,14 @@ std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen
 
 
 void cmdCallback(const ros::TimerEvent &e) {
-  if (!target_receive)
+  if (!target_receive && !land_triger_received_)
     return;
   if (!triger_received_)
     return;
-    if (stop_triger_received_)
+  if (stop_triger_received_)
     return;
   if (!receive_traj_ || true)
   {
-    double mid_yaw = 0;
-    double angle_diff = atan2(sin(target_dog_yaw - vins_yaw), cos(target_dog_yaw - vins_yaw));
-    mid_yaw = 0.8*angle_diff + vins_yaw;
     quadrotor_msgs::PositionCommand cmd;
     cmd.header.stamp = ros::Time::now();
     cmd.header.frame_id = "world";
@@ -587,8 +617,6 @@ void cmdCallback(const ros::TimerEvent &e) {
       cmd.position.x = mpc_p.x();
       cmd.position.y = mpc_p.y();
       cmd.position.z = mpc_p.z();
-      land_mpc_velocity.x() = mpc_v.x() + 0.4 * error_mpcx + 1.8 * (error_mpcx - last_error_mpcx);
-      land_mpc_velocity.y() = mpc_v.y() + 0.6 * error_mpcy + 0.15 * intergral_mpcy;
 
     //   BPNN_count ++;
     //   if (BPNN_count > 4) {
@@ -613,9 +641,29 @@ void cmdCallback(const ros::TimerEvent &e) {
     //   const double adaptive_kd_z = pid_z.get_parm().Kd;
     
       if(!land_triger_received_){
-        cmd.velocity.x = mpc_v.x() + 0.4 * error_mpcx + std::max(std::min(1.8 * (error_mpcx - last_error_mpcx),0.12),-0.12);
-        cmd.velocity.y = mpc_v.y() + 0.6 * error_mpcy + 0.3 * intergral_mpcy + std::max(std::min(2.5 * (error_mpcy - last_error_mpcy),0.12),-0.12);
-        cmd.velocity.z = mpc_v.z() + 0.3 * error_mpcz + 0.3 * intergral_mpcz + std::max(std::min(1.8 * (error_mpcz - last_error_mpcz),0.12),-0.12);
+        // cmd.velocity.x = mpc_v.x() + 0.4 * error_mpcx + std::max(std::min(1.8 * (error_mpcx - last_error_mpcx),0.12),-0.12);
+        // cmd.velocity.y = mpc_v.y() + 0.6 * error_mpcy + 0.3 * intergral_mpcy + std::max(std::min(2.5 * (error_mpcy - last_error_mpcy),0.12),-0.12);
+        // cmd.velocity.z = mpc_v.z() + 0.3 * error_mpcz + 0.3 * intergral_mpcz + std::max(std::min(1.8 * (error_mpcz - last_error_mpcz),0.12),-0.12);
+
+        // 基础PID控制
+        double base_vel_x = mpc_v.x() + x_p * error_mpcx + x_i * intergral_mpcx + std::max(std::min(x_d * (error_mpcx - last_error_mpcx),x_d_max),-x_d_max);
+        double base_vel_y = mpc_v.y() + y_p * error_mpcy + y_i * intergral_mpcy + std::max(std::min(y_d * (error_mpcy - last_error_mpcy),y_d_max),-y_d_max);
+        double base_vel_z = mpc_v.z() + z_p * error_mpcz + z_i * intergral_mpcz + std::max(std::min(z_d * (error_mpcz - last_error_mpcz),z_d_max),-z_d_max);
+        
+        // 添加基于dog_pos的velocity前馈（非landing模式）
+        if (hc14_dog_pos_received) {
+          double dog_velocity_ff_gain = 0.2;  // 前馈增益系数（非landing模式下较小）
+          
+          // 加权平均：原来的值 * (1-增益) + 前馈值 * 增益
+          cmd.velocity.x = (1.0 - dog_velocity_ff_gain) * base_vel_x + dog_velocity_ff_gain * hc14_dog_vel.x();
+          cmd.velocity.y = (1.0 - dog_velocity_ff_gain) * base_vel_y + dog_velocity_ff_gain * hc14_dog_vel.y();
+          cmd.velocity.z = base_vel_z;
+        } else {
+          // 如果没有dog_pos信息，使用基础控制
+          cmd.velocity.x = base_vel_x;
+          cmd.velocity.y = base_vel_y;
+          cmd.velocity.z = base_vel_z;
+        }
 
         // Eigen::Vector3d BLSC_velocity;
         // BLSCController(vins_p, vins_v, mpc_p, mpc_v, BLSC_velocity);
@@ -624,9 +672,30 @@ void cmdCallback(const ros::TimerEvent &e) {
         // cmd.velocity.z = BLSC_velocity.z();
       }
       else{
-        cmd.velocity.x = land_mpc_velocity.x();
-        cmd.velocity.y = land_mpc_velocity.y();
-        cmd.velocity.z = mpc_v.z() + land_mpc_velocity.norm() * 0.0 + 0.3* error_mpcz + 1.8 * (error_mpcz - last_error_mpcz);
+        // cmd.velocity.x = mpc_v.x() + 0.1 * error_mpcx + std::max(std::min(1.8 * (error_mpcx - last_error_mpcx),0.12),-0.12);
+        // cmd.velocity.y = mpc_v.y() + 0.1 * error_mpcy + 0.3 * intergral_mpcy + std::max(std::min(2.5 * (error_mpcy - last_error_mpcy),0.12),-0.12);
+        // cmd.velocity.z = mpc_v.z() + 0.1 * error_mpcz + 0.3 * intergral_mpcz + std::max(std::min(1.8 * (error_mpcz - last_error_mpcz),0.12),-0.12);
+        
+        // Landing模式下的基础PID控制
+        double base_vel_x = mpc_v.x() + x_p * error_mpcx + x_i * intergral_mpcx + std::max(std::min(x_d * (error_mpcx - last_error_mpcx),0.12),-0.12);
+        double base_vel_y = mpc_v.y() + y_p * error_mpcy + y_i * intergral_mpcy + std::max(std::min(y_d * (error_mpcy - last_error_mpcy),0.12),-0.12);
+        double base_vel_z = mpc_v.z() + z_p * error_mpcz + z_i * intergral_mpcz + std::max(std::min(z_d * (error_mpcz - last_error_mpcz),0.12),-0.12);
+        
+        // 添加基于dog_pos的velocity前馈（landing模式）
+        if (hc14_dog_pos_received) {
+          double dog_velocity_ff_gain = 0.5;  // 前馈增益系数（landing模式下较大）
+          
+          // 加权平均：原来的值 * (1-增益) + 前馈值 * 增益
+          cmd.velocity.x = (1.0 - dog_velocity_ff_gain) * base_vel_x + dog_velocity_ff_gain * hc14_dog_vel.x();
+          cmd.velocity.y = (1.0 - dog_velocity_ff_gain) * base_vel_y + dog_velocity_ff_gain * hc14_dog_vel.y();
+          cmd.velocity.z = base_vel_z;
+        } else {
+          // 如果没有dog_pos信息，使用基础控制
+          cmd.velocity.x = base_vel_x;
+          cmd.velocity.y = base_vel_y;
+          cmd.velocity.z = base_vel_z;
+        }
+        
         // Eigen::Vector3d BLSC_velocity;
         // BLSCController(vins_p, vins_v, mpc_p, mpc_v, BLSC_velocity);
         // cmd.velocity.x = BLSC_velocity.x();
@@ -640,31 +709,81 @@ void cmdCallback(const ros::TimerEvent &e) {
       intergral_mpcx += 0.01 * error_mpcx;
       intergral_mpcy += 0.01 * error_mpcy;
       intergral_mpcz += 0.01 * error_mpcz;
-      if (landtriger == 1 || land_triger_received_ && flow_detect && (ros::Time::now() - flow_timer).toSec() > 0.12  || AOA_x < 0.05)
+
+      if (land_triger_received_ || landtriger == 1)
       {
         landtriger = 1;
-        cmd.position.z = vins_p.z() - 1;
-        cmd.velocity.z = -0.8;
-        cmd.position.x = vins_p.x();
-        cmd.position.y = vins_p.y();
-        cmd.velocity.x = target_v.x();
-        cmd.velocity.y = target_v.y();
-        land_test_count += 1;
-        if (land_test_count > 40 && land_test_count < 200)
+        if (!target_receive) {
+          if (target_receive_triger == 1){
+            target_receive_triger = 0;
+            target_lost_time = ros::Time::now();
+          }
+
+          double target_lost_time_gap = (ros::Time::now() - target_lost_time).toSec();
+          double target_lost_v_decay = exp(-1.0 * target_lost_time_gap / 10);
+
+          cmd.position.z = vins_p.z() - 0.4;
+        //   cmd.velocity.z = -0.4;
+          cmd.position.x = target_p.x() + target_lost_time_gap * target_v.x() * target_lost_v_decay;
+          cmd.position.y = target_p.y() + target_lost_time_gap * target_v.y() * target_lost_v_decay;
+          
+          // Landing模式下的velocity前馈控制
+          if (hc14_dog_pos_received) {
+            // 基于dog_pos的velocity前馈
+            double dog_velocity_ff_gain = 0.8;  // 前馈增益系数
+            
+            // 加权平均：原来的值 * (1-增益) + 前馈值 * 增益
+            double base_vel_x_lost = target_v.x() * target_lost_v_decay;
+            double base_vel_y_lost = target_v.y() * target_lost_v_decay;
+            
+            cmd.velocity.x = (1.0 - dog_velocity_ff_gain) * base_vel_x_lost + dog_velocity_ff_gain * hc14_dog_vel.x();
+            cmd.velocity.y = (1.0 - dog_velocity_ff_gain) * base_vel_y_lost + dog_velocity_ff_gain * hc14_dog_vel.y();
+            
+          } else {
+            // 如果没有dog_pos信息，使用原来的控制
+            cmd.velocity.x = target_v.x() * target_lost_v_decay;
+            cmd.velocity.y = target_v.y() * target_lost_v_decay;
+          }
+        }
+        
+        if (flow_z < 0.05 && flow_z > 0.0)
+            land_test_count += 1;
+        else
+            land_test_count = std::max(land_test_count - 0.5, 0.0);
+
+        if (land_test_count > 2)
         {
           quadrotor_msgs::TakeoffLand land;
           land.takeoff_land_cmd = 2;
           land_pub_.publish(land);
+          land_triger_received_ = false;
+          landtriger = 0;
+          triger_received_ = 0;
         }
       }
     }
     else {
       return;
     }
+    
+    double angle_diff = atan2(sin(target_dog_yaw - vins_yaw), cos(target_dog_yaw - vins_yaw));
+    
+    // 角度限制逻辑，防止一次转角太大
+    if (std::fabs(angle_diff) > 1.5)
+      cmd.yaw = 0.4 * angle_diff + vins_yaw;
+    else
+      cmd.yaw = angle_diff + vins_yaw;
 
-    cmd.yaw = vins_yaw;
+    // 先加offset
+    cmd.velocity.x += vx_offset;
+    cmd.velocity.y += vy_offset;
+    cmd.velocity.z += vz_offset;
 
-    cmd.yaw = 0.4*angle_diff + vins_yaw;
+    // 再做上下限限制
+    cmd.velocity.x = std::max(-1.5, std::min(1.5, cmd.velocity.x));
+    cmd.velocity.y = std::max(-1.5, std::min(1.5, cmd.velocity.y));
+    cmd.velocity.z = std::max(-1.5, std::min(1.5, cmd.velocity.z));
+
     pos_cmd_pub_.publish(cmd);
     if (land_triger_received_ && landtriger != 1)
       land_mark_pub_.publish(cmd);
@@ -704,6 +823,50 @@ void traj_v_callback(const nav_msgs::Path::ConstPtr& msg) {
     }
 }
 
+void reset_receive_flag(const ros::TimerEvent &event) {
+    if (target_count != last_target_count) {
+        target_receive = true;
+        last_target_count = target_count;
+        target_receive_triger = 1;
+        last_target_timer = 0;
+        target_count = 0;
+    } 
+    else {
+        last_target_timer++;
+        if (last_target_timer >= 2)
+            target_receive = false;
+    }
+    
+    // 检查dog_pos_received状态（模仿target_count的逻辑）
+    if (hc14_dog_pos_count != last_hc14_dog_pos_count) {
+        hc14_dog_pos_received = true;
+        last_hc14_dog_pos_count = hc14_dog_pos_count;
+        last_hc14_dog_pos_timer = 0;  // 重置dog_pos的timer
+    } else {
+        last_hc14_dog_pos_timer++;
+        if (last_hc14_dog_pos_timer >= 5)  // 连续5次没有新包才重置
+        hc14_dog_pos_received = false;
+    }
+
+    if (hc14_dog_pos_received) {
+        std::cout << "hc14_dog_pos_received" << std::endl;
+    }
+
+    // quadrotor_msgs::PositionCommand test;
+    // test.header.stamp = ros::Time::now();
+    // test.header.frame_id = "world";
+    // test.trajectory_flag = quadrotor_msgs::PositionCommand::TRAJECTORY_STATUS_READY;
+    // test.trajectory_id = 0.0;
+    // test.velocity.x = 0.0;
+    // test.velocity.y = 0.0;
+    // test.velocity.z = 0.0;
+    // test.yaw = 0.0;
+    // test.position.x = target_receive * 1.0;
+    // test.position.y = 0.0;
+    // test.position.z = 0.0;
+    // test_mark_pub_.publish(test);
+}
+
 void mpc_callback(const ros::TimerEvent &event){
   if (!traj_initialized)
   {
@@ -734,24 +897,16 @@ void bppidCallback(const ros::TimerEvent &event) {
 }
 
 void auto_landing_detect(const ros::TimerEvent &event) {
-  if (triger_received_) 
+  if (!triger_received_) 
+  {
+    return;
+  }
+
+  if (!land_triger_received_ && target_receive)
   {
     land_count += 1;
-  }
-  else return;
-  Eigen::Vector3d delta_p = {target_p.x() - tracking_dist_ * std::cos(target_dog_yaw) - vins_p.x(), target_p.y() - tracking_dist_ * std::sin(target_dog_yaw) - vins_p.y(), target_p.z() - vins_p.z() + 0.05};
-  
-  // 创建绕 Z 轴的 2D 逆时针旋转
-  Eigen::Rotation2D<double> rot(target_dog_yaw);
-
-  // 只对 x 和 y 分量旋转
-  Eigen::Vector2d rotated_xy = rot * delta_p.head<2>();
-  Eigen::Vector3d rotated_delta_p(rotated_xy.x(), rotated_xy.y(), delta_p.z());
-
-  if (!land_triger_received_ && std::fabs(rotated_delta_p[1]) < 0.2 && std::fabs(delta_p[2]) < 0.1 && delta_p[2] < 0.0)
-  {
     Eigen::Vector3d delta_v = {target_v.x() - vins_v.x(), target_v.y() - vins_v.y(), target_v.z() - vins_v.z()};
-    if (std::fabs(delta_v[0]) < 0.2 && std::fabs(delta_v[1]) < 0.2 && std::fabs(delta_v[2]) < 0.2 && land_count > 25)
+    if (std::fabs(delta_v[0]) < 0.2 && std::fabs(delta_v[1]) < 0.2 && std::fabs(delta_v[2]) < 0.2 && land_count > 15)
     {
       std::cout << "Auto landing triggered!" << std::endl;
       // land_triger_received_ = true;
@@ -761,9 +916,9 @@ void auto_landing_detect(const ros::TimerEvent &event) {
     
     }
   }
-  // else {
-  //   land_count -= 0.5;
-  // }
+  else {
+    land_count = std::max(0.0, land_count - 1.0);
+  }
 }
 
 int main(int argc, char **argv) {
@@ -780,8 +935,13 @@ int main(int argc, char **argv) {
   ros::Subscriber AOA_sub_ = nh.subscribe("/AOA_Tag_data", 10, AOA_callback);
   ros::Subscriber flow_sub_ = nh.subscribe("/flow_data", 10, flow_callback);
 
+  ros::Subscriber sub = nh.subscribe("/pid", 1000, pid_callback);
+
   ros::Subscriber traj_sub_ = nh.subscribe<nav_msgs::Path>("/drone2/planning/traj", 10, traj_callback);
   ros::Subscriber traj_v_sub_ = nh.subscribe<nav_msgs::Path>("/traj_v", 10, traj_v_callback);
+  
+  // 订阅dog_pos话题
+  ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos", 10, dog_pos_callback);
   
 
   pos_cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd", 50);
@@ -798,7 +958,9 @@ int main(int argc, char **argv) {
 
   ros::Timer mpc_timer = nh.createTimer(ros::Duration(0.01), mpc_callback);
 
-  ros::Timer auto_land_timer = nh.createTimer(ros::Duration(0.2), auto_landing_detect);
+  ros::Timer flag_reset_timer = nh.createTimer(ros::Duration(0.1), reset_receive_flag);
+
+//   ros::Timer auto_land_timer = nh.createTimer(ros::Duration(0.2), auto_landing_detect);
 
   ros::Duration(1.0).sleep();
 

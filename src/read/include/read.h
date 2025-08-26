@@ -42,7 +42,9 @@
 
 using namespace cv;
 
-#define SIMULATE
+// #define SIMULATE
+# define SAVE_VIDEO
+# define SCREEN_SHOW
 
 namespace image{
 class MedianFilter1 {
@@ -80,8 +82,12 @@ public:
     void pose_cb(const nav_msgs::Odometry::ConstPtr& msg) ;
     void AOA_callback(const nav_msgs::Odometry::ConstPtr& msg) ;
     void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) ;
+#ifndef SIMULATE
     void svo_callback(const boost::shared_ptr<const geometry_msgs::PoseWithCovarianceStamped>& msg);
-    std::pair<Eigen::Vector3d, Eigen::Matrix3d> get_T1_R1() const ;
+#else
+    void svo_callback(const boost::shared_ptr<const geometry_msgs::PoseStamped>& msg);
+#endif
+        std::pair<Eigen::Vector3d, Eigen::Matrix3d> get_T1_R1() const ;
 
 private:
     ros::NodeHandle nh;

@@ -9,7 +9,7 @@ PATHS=(
     "/home/pc/Fast-Drone-250"
     "/home/pc/Fast-Drone-250"
     "/home/pc/Fast-Drone-250"
-    "/home/pc/Elastic-Tracker"
+    "/home/pc/Fast-Drone-250"
 )
 
 # 对应命令

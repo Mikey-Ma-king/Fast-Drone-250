@@ -11,6 +11,10 @@ extern double target_yaw;
 extern double last_target_yaw;
 extern double target_dog_yaw;
 extern bool target_receive;
+extern int target_count;
+
+extern Eigen::Vector3d hc14_dog_vel;
+extern int hc14_dog_pos_count;
 
 extern double AOA_x;
 extern double AOA_w;
@@ -19,6 +23,15 @@ extern double flow_z;
 extern ros::Time flow_timer;
 extern bool flow_detect;
 
+extern double x_p;
+extern double x_i;
+extern double x_d;
+extern double y_p;
+extern double y_i;
+extern double y_d;
+extern double z_p;
+extern double z_i;
+extern double z_d;
 
 extern bool triger_received_;
 extern bool land_triger_received_;
@@ -125,7 +138,7 @@ YawSmoother yaw_filter(5.0, 1.0/30.0);
 void target_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     target_p.x() = msg->pose.pose.position.x + 0.00*std::sin(target_dog_yaw);
     target_p.y() = msg->pose.pose.position.y - 0.00*std::cos(target_dog_yaw);
-    target_p.z() = std::max(msg->pose.pose.position.z,vins_p.z()-0.4);
+    target_p.z() = std::max(msg->pose.pose.position.z,vins_p.z()-5.0);
     target_v.x() = msg->twist.twist.linear.x;
     target_v.y() = msg->twist.twist.linear.y;
     target_v.z() = 0;
@@ -136,20 +149,20 @@ void target_callback(const nav_msgs::Odometry::ConstPtr& msg) {
       target_v.z() = 0;
     }
     double vins_q_w = msg->pose.pose.orientation.w;
-    double vins_q_x = msg->pose.pose.orientation.x;
-    double vins_q_y = msg->pose.pose.orientation.y;
-    double vins_q_z = msg->pose.pose.orientation.z;
+    // double vins_q_x = msg->pose.pose.orientation.x;
+    // double vins_q_y = msg->pose.pose.orientation.y;
+    // double vins_q_z = msg->pose.pose.orientation.z;
     // 计算偏航角
-    double siny_cosp = 2.0 * (vins_q_w * vins_q_z + vins_q_x * vins_q_y);
-    double cosy_cosp = 1.0 - 2.0 * (vins_q_y * vins_q_y + vins_q_z * vins_q_z);
-    target_yaw = std::atan2(siny_cosp, cosy_cosp);
-    target_yaw = 0.6* last_target_yaw + 0.4 * target_yaw;
+    // double siny_cosp = 2.0 * (vins_q_w * vins_q_z + vins_q_x * vins_q_y);
+    // double cosy_cosp = 1.0 - 2.0 * (vins_q_y * vins_q_y + vins_q_z * vins_q_z);
+    // target_yaw = std::atan2(siny_cosp, cosy_cosp);
+    // target_yaw = 0.6* last_target_yaw + 0.4 * target_yaw;
     // target_yaw = 0;
-    last_target_yaw = target_yaw;
+    // last_target_yaw = target_yaw;
     // double yaw = 2 * std::atan2(vins_q_z, vins_q_w);
     // yaw -= 3.141593;
     // std::cout<<"yaw:"<<target_yaw<<std::endl;
-    target_receive = true;
+    target_count ++;
     // target_dog_yaw = vins_q_w;
     target_dog_yaw = yaw_filter.update(vins_q_w);
 }
@@ -188,4 +201,37 @@ void stop_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
 
 void heartbeatCallback(const std_msgs::EmptyConstPtr &msg) {
     heartbeat_time_ = ros::Time::now();
+}
+
+void pid_callback(const std_msgs::Float64MultiArray::ConstPtr& msg) {
+    ROS_INFO("Received PID Gains:");
+    ROS_INFO("  X: Kp=%f, Ki=%f, Kd=%f", msg->data[0], msg->data[1], msg->data[2]);
+    ROS_INFO("  Y: Kp=%f, Ki=%f, Kd=%f", msg->data[3], msg->data[4], msg->data[5]);
+    ROS_INFO("  Z: Kp=%f, Ki=%f, Kd=%f", msg->data[6], msg->data[7], msg->data[8]);
+    x_p = msg->data[0];
+    x_i = msg->data[1];
+    x_d = msg->data[2];
+    y_p = msg->data[3];
+    y_i = msg->data[4];
+    y_d = msg->data[5];
+    z_p = msg->data[6];
+    z_i = msg->data[7];
+    z_d = msg->data[8];
+}
+
+void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
+    // 更新dog的速度信息
+    hc14_dog_vel.x() = msg->twist.twist.linear.x;
+    hc14_dog_vel.y() = msg->twist.twist.linear.y;
+    hc14_dog_vel.z() = msg->twist.twist.linear.z;
+    
+    // 给狗的速度加上上下限
+    const double max_dog_velocity = 1.5;  // 最大速度限制 (m/s)
+    const double min_dog_velocity = -1.5; // 最小速度限制 (m/s)
+    
+    hc14_dog_vel.x() = std::max(min_dog_velocity, std::min(max_dog_velocity, hc14_dog_vel.x()));
+    hc14_dog_vel.y() = std::max(min_dog_velocity, std::min(max_dog_velocity, hc14_dog_vel.y()));
+    hc14_dog_vel.z() = std::max(min_dog_velocity, std::min(max_dog_velocity, hc14_dog_vel.z()));
+    
+    hc14_dog_pos_count++;  // 收到包时计数器+1
 }

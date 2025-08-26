@@ -1,6 +1,7 @@
 #pragma once
 
 #include <geometry_msgs/PoseStamped.h>
+#include "std_msgs/Float64MultiArray.h"
 #include <nav_msgs/Odometry.h>
 #include <ros/package.h>
 #include <ros/ros.h>
@@ -20,3 +21,5 @@ void triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr);
 void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr);
 void stop_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr);
 void heartbeatCallback(const std_msgs::EmptyConstPtr &msg);
+void pid_callback(const std_msgs::Float64MultiArray::ConstPtr& msg);
+void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg);

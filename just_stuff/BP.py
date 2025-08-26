@@ -4,8 +4,8 @@ import glob
 import os
 
 # 设置棋盘格尺寸
-chessboard_size = (8, 6)
-square_size = 0.031
+chessboard_size = (11, 8)
+square_size = 0.045
   # 单位：米
 
 # 准备棋盘格点的3D坐标
@@ -18,8 +18,8 @@ objpoints = []
 imgpoints = []
 
 # 获取棋盘格图像
-image_dir = 'captured_images_4'
-images = glob.glob(os.path.join(image_dir, 'image_*.jpg'))
+image_dir = 'captured_images_5'
+images = glob.glob(os.path.join(image_dir, 'frame_*.jpg'))
 
 if not images:
     print("未找到任何图像，请确保path_to_images目录下有标定图像。")

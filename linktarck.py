@@ -7,7 +7,7 @@ from nav_msgs.msg import Odometry
 import math
 
 # 串口配置
-SERIAL_PORT = "/dev/ttyACM1"
+SERIAL_PORT = "/dev/USB_AOA"
 BAUD_RATE = 921600
 TIMEOUT = 0.1  # 超时时间，避免过度等待
 

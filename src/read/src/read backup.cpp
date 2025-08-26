@@ -536,18 +536,18 @@ void UAVStateListener1::pose_cb(const nav_msgs::Odometry::ConstPtr& msg) {
             list.clear();
         }
     }
-#ifdef SIMULATE
-    void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseStamped>& msg) {
-#else
-    void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseWithCovarianceStamped>& msg) {
-#endif
-        predict_index = 0;
+    #ifdef SIMULATE
+        void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseStamped>& msg) {
+    #else
+        void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseWithCovarianceStamped>& msg) {
+    #endif
+            predict_index = 0;
 
-#ifdef SIMULATE
+    #ifdef SIMULATE
         Eigen::Vector4d state(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,ros::Time::now().toSec());
-#else
+    #else
         Eigen::Vector4d state(msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z,ros::Time::now().toSec());
-#endif
+    #endif
         // static bool svo_initialize = false;
         static std::vector<Eigen::Matrix<double,6,1>> svo_predict_list;
         if(!svo_initialize){
@@ -678,7 +678,7 @@ double rotationMatrixToEulerAngles(const Eigen::Matrix3d& R) {
         y = std::atan2(-R(2, 0), sy);
         z = 0;
     }
-    double z_degrees = radians_to_degrees(z);
+    double z_degrees = radians_to_degrees(z)+180;
 
     // 如果 z 角度大于 180，则减去 360，确保角度在 [-180, 180] 范围内
     if (z_degrees > 180.0) {
@@ -715,32 +715,20 @@ void read::reda(ros::NodeHandle& nh) {
     //       0, 0, -1,
     //       1, 0, 0;
 
-    // camera:
-    // x: -inf left->right +inf
-    // y: -inf up  ->down  +inf
-    // z: -inf back->front   +inf
+    M << -1, 0, 0,
+          0, -1, 0,
+          0, 0, 1;
+    Eigen::Matrix3d M1;
+    M1 << -1, 0, 0,
+          0, -1, 0,
+          0, 0, 1;
 
-    // drone:
-    // x: -inf back ->front +inf
-    // y: -inf right->left  +inf
-    // z: -inf down ->up    +inf
-
-    // tag deg :
-    // left: green
-    // front: red
-    // up: blue
-
-    Eigen::Matrix3d M_camera2drone;
-    M_camera2drone <<  1, 0, 0,
-                       0, -1, 0,
-                       0, 0, -1;
-    Eigen::Matrix3d M_tag2camera;
-    M_tag2camera  <<  0, 1, 0,
-                      -1, 0, 0,
-                      0, 0, 1;
-
+    Eigen::Matrix3d M2;
+    M2 << 1, 0, 0,
+          0, -1, 0,
+          0, 0, -1;
     nh_ = nh;
-    cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_7X7_250);
+    cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
     cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
 
     Eigen::Vector3d T3_1;
@@ -778,28 +766,27 @@ void read::reda(ros::NodeHandle& nh) {
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
     // cap.set(cv::CAP_PROP_EXPOSURE, -4);
-    cap.set(cv::CAP_PROP_FPS, 120);
+    cap.set(cv::CAP_PROP_FPS, 180);
     double fps = cap.get(cv::CAP_PROP_FPS);
     std::cout << "当前帧率: " << fps << " FPS" << std::endl;
    
-#ifdef SAVE_VIDEO
-    // 视频保存参数
     auto time_now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     std::tm* tm_now = std::localtime(&time_now);
     char buffer[80];
     std::strftime(buffer, sizeof(buffer), "%H:%M:%S", tm_now);
     std::string time_video(buffer);
     std::string unique_filename = "/home/pc/Fast-Perching/output_video_" + time_video + ".avi";
-    int fourcc_video = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-    cv::VideoWriter out(unique_filename, fourcc_video, 120.0, cv::Size(1280,720));
 
-    std::map<int, Eigen::Vector3d> markerPositions;
+    // 视频保存参数
+    // int fourcc_video = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
+    // cv::VideoWriter out(unique_filename, fourcc_video, 180.0, cv::Size(1280,720));
 
-    if (!out.isOpened()) {
-        std::cerr << "无法保存视频文件" << std::endl;
-        exit(1);
-    }
-#endif
+    // std::map<int, Eigen::Vector3d> markerPositions;
+
+    // if (!out.isOpened()) {
+    //     std::cerr << "无法保存视频文件" << std::endl;
+    //     exit(1);
+    // }
 
     while (true)
     {
@@ -844,132 +831,101 @@ void read::reda(ros::NodeHandle& nh) {
 
             cv::aruco::drawDetectedMarkers(frame, markerCorners, markerIds);
 
-            std::vector<cv::Vec3d> rvecs1, tvecs1;
+            std::vector<cv::Vec3d> rvecs, tvecs;
             std::vector<cv::Vec3d> rvecs0, tvecs0;
-            std::vector<cv::Vec3d> rvecs2, tvecs2;
 
-            // 检查是否包含29号二维码
-            bool hasMarkerMain = false;
-            for (int i = 0; i < markerIds.size(); ++i) {
-                if (markerIds[i] == 29) {
-                    hasMarkerMain = true;
-                    break;
-                }
-            }
-
-            // 如果有29号二维码，只计算0.15的尺寸
-            if (hasMarkerMain) {
-                cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.15, cameraMatrix, distCoeffs, rvecs1, tvecs1);
-            } else {
-                // 如果没有29号二维码，计算所有尺寸
-                cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.0165, cameraMatrix, distCoeffs, rvecs0, tvecs0);
-                cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.15, cameraMatrix, distCoeffs, rvecs1, tvecs1);
-                cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.06, cameraMatrix, distCoeffs, rvecs2, tvecs2);
-            }
-
+            float arucoLength = 0.10; //aruco二维码边长
+            cv::aruco::estimatePoseSingleMarkers(markerCorners, arucoLength, cameraMatrix, distCoeffs, rvecs, tvecs);
+            cv::aruco::estimatePoseSingleMarkers(markerCorners, 0.03, cameraMatrix, distCoeffs, rvecs0, tvecs0);
             Eigen::Vector3d position{0, 0, 0};
             Eigen::Vector3d averagePosition{0, 0, 0};
-            double positionCount = 0;
+            int positionCount = 0;
 
             for (int i = 0; i < markerIds.size(); ++i)
             {
-                int currentMarkerId = markerIds[i];  // 获取当前标签ID
-                
-                // 如果有29号二维码，跳过其他二维码的处理
-                if (hasMarkerMain && (currentMarkerId != 29)) {
-                    continue;
-                }
-                
-                Eigen::Vector3d T2;
-                Eigen::Matrix3d R2;
-                cv::Vec3d rvec;
-                cv::Vec3d tvec;
-                if(currentMarkerId == 29){
-                    rvec = rvecs1[i];
-                    tvec = tvecs1[i];
-                }
-                else if(currentMarkerId == 33){
-                    rvec = rvecs0[i];
-                    tvec = tvecs0[i];
-                }
-                else if(currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3){
-                    rvec = rvecs2[i];
-                    tvec = tvecs2[i];
-                }
-                else
-                    continue;
+              int currentMarkerId = markerIds[i];  // 获取当前标签ID
+              if(currentMarkerId != 0 && currentMarkerId != 6 && currentMarkerId != 1 && currentMarkerId != 2 && currentMarkerId != 3)
+                continue;
+              Eigen::Vector3d T2;
+              Eigen::Matrix3d R2;
+              cv::Vec3d rvec;
+              cv::Vec3d tvec;
+            if(currentMarkerId == 6){
+              rvec = rvecs[i];
+              tvec = tvecs[i];
+            }
+            else{
+              rvec = rvecs0[i];
+              tvec = tvecs0[i];
+            }
+              T2 << tvec[0], tvec[1], tvec[2];
+          
+              cv::Mat rotationMatrix;
+              cv::Rodrigues(rvec, rotationMatrix);
+              for (int i = 0; i < 3; ++i){
+                for (int j = 0; j < 3; ++j)
+                  R2(i, j) = rotationMatrix.at<double>(i, j);}
+            //   Eigen::Vector3d T3(T2[2], -T2[0], -T2[1]);
+            Eigen::Vector3d T3(-T2[0], -T2[1], T2[2]);
+            //   T3[2] += 0.05;
+              T3_1 = T3;
+            
+            //位置计算
+            R2 = M * R2 * M1;
+            position = R1 * T3 + T1;
 
-                T2 << tvec[0], tvec[1], tvec[2];
-                cv::Mat rotationMatrix;
-                cv::Rodrigues(rvec, rotationMatrix);
-                
-                for (int i = 0; i < 3; ++i){
-                    for (int j = 0; j < 3; ++j)
-                        R2(i, j) = rotationMatrix.at<double>(i, j);}
-                //   Eigen::Vector3d T3(T2[2], -T2[0], -T2[1]);
-                Eigen::Vector3d T3 = M_camera2drone * T2;
-                //   T3[2] += 0.05;
-                T3_1 = T3;
-                //位置计算
-                R2 = M_camera2drone * M_tag2camera * R2;
-                position = R1 * T3 + T1;
-
-                //偏航角计算
+            //偏航角计算
+            if(currentMarkerId == 6){
+                // Eigen::Matrix3d pose = R1 * R2 * R1.transpose();
                 Eigen::Matrix3d pose = R1 * R2;
                 Eigen::Quaterniond q(correctYaw(pose));
                 double deg = rotationMatrixToEulerAngles(pose);
                 glo_deg = deg;
-
-                if (currentMarkerId == 29)
-                    fin_deg = 0.2*last_deg + 0.8*deg;
-                else if (currentMarkerId == 33)
-                    fin_deg = 0.5*last_deg + 0.5*deg;
-                else if (currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3)
-                    fin_deg = 0.35*last_deg + 0.65*deg;
-
+                fin_deg = 0.35*last_deg + 0.65*deg;
                 fin_deg = mf1.update(fin_deg);
                 if(std::fabs(fin_deg-last_deg)<3)
                     fin_deg = last_deg;
                 else
                     last_deg = fin_deg;
                 fin_deg = fin_deg*M_PI/180;
+                }
 
 
-                // position.y() = position.y() + 0.1*std::cos(fin_deg);
-                // position.x() = position.x() - 0.1*std::sin(fin_deg);
-                
-                if (currentMarkerId == 29){
-                    averagePosition += (position * 0.8);
-                    positionCount += 0.8;
-                }
-                else if (currentMarkerId == 33){
-                    averagePosition += (position * 0.5);
-                    positionCount += 0.5;
-                }
-                else if (currentMarkerId == 0){
-                    position.x() = position.x() - 0.18*std::cos(fin_deg) + 0.10*std::sin(fin_deg);
-                    position.y() = position.y() - 0.18*std::sin(fin_deg) - 0.10*std::cos(fin_deg);
-                    averagePosition += (position * 0.65);
-                    positionCount += 0.65;
-                }
-                else if (currentMarkerId == 1){
-                    position.x() = position.x() + 0.22*std::cos(fin_deg) + 0.10*std::sin(fin_deg);
-                    position.y() = position.y() + 0.22*std::sin(fin_deg) - 0.10*std::cos(fin_deg);
-                    averagePosition += (position * 0.65);
-                    positionCount += 0.65;
-                }
-                else if (currentMarkerId == 2){
-                    position.x() = position.x() + 0.22*std::cos(fin_deg) - 0.18*std::sin(fin_deg);
-                    position.y() = position.y() + 0.22*std::sin(fin_deg) + 0.18*std::cos(fin_deg);
-                    averagePosition += (position * 0.65);
-                    positionCount += 0.65;
-                }
-                else if (currentMarkerId == 3){
-                    position.x() = position.x() - 0.18*std::cos(fin_deg) - 0.18*std::sin(fin_deg);
-                    position.y() = position.y() - 0.18*std::sin(fin_deg) + 0.18*std::cos(fin_deg);
-                    averagePosition += (position * 0.65);
-                    positionCount += 0.65;
-                }
+            if (currentMarkerId == 0){
+                position.x() = position.x() + 0.06*std::sin(fin_deg);
+                position.y() = position.y() - 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 1){
+                position.x() = position.x() - 0.06*std::sin(fin_deg);
+                position.y() = position.y() + 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 2){
+                position.x() = position.x() + 0.06*std::sin(fin_deg);
+                position.y() = position.y() - 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 3){
+                position.x() = position.x() - 0.06*std::sin(fin_deg);
+                position.y() = position.y() + 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 4){
+                position.x() = position.x() - 0.06*std::sin(fin_deg);
+                position.y() = position.y() + 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 5){
+                position.x() = position.x() - 0.06*std::sin(fin_deg);
+                position.y() = position.y() + 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 6){
+                position.x() = position.x() - 0.06*std::sin(fin_deg);
+                position.y() = position.y() + 0.06*std::sin(fin_deg);
+            }
+            else if (currentMarkerId == 7){
+                position.x() = position.x() - 0.06*std::sin(fin_deg);
+                position.y() = position.y() + 0.06*std::sin(fin_deg);
+            }
+              
+            averagePosition += position;
+            positionCount++;
             }
 
             position = averagePosition / positionCount;
@@ -1021,15 +977,12 @@ void read::reda(ros::NodeHandle& nh) {
 
 
             //降落位置识别
-              averge_vel = {0, 0, 0};
+              averge_vel = {position[0], position[1], position[2]};
               glo_pos = position;
-              if (pos.size() >= 3 || true) {
+              if (pos.size() >= 3) {
                     double filtered_x = kf_x.filter(avg.x());
                     double filtered_y = kf_y.filter(avg.y());
                     double filtered_z = kf_z.filter(avg.z());
-                    // double filtered_x = position.x();
-                    // double filtered_y = position.y();
-                    // double filtered_z = position.z();
 
                     odom_msg.pose.pose.position.x = round_to_decimal_places(filtered_x, 2);
                     odom_msg.pose.pose.position.y = round_to_decimal_places(filtered_y, 2);
@@ -1073,11 +1026,22 @@ void read::reda(ros::NodeHandle& nh) {
             for (int i = 0; i < markerIds.size(); ++i)
             {
                 int currentMarkerId1 = markerIds[i];  // 获取当前标签ID
-                cv::aruco::drawAxis(frame, cameraMatrix, distCoeffs, rvecs1[i], tvecs1[i], 0.1);
+                if(currentMarkerId1 == 6)
+                    cv::aruco::drawAxis(frame, cameraMatrix, distCoeffs, rvecs[i], tvecs[i], 0.1);
+                else
+                    cv::aruco::drawAxis(frame, cameraMatrix, distCoeffs, rvecs0[i], tvecs0[i], 0.03);
             }
         }
 
             
+
+        // 显示平均速度 averge_vel
+        cv::putText(frame, std::string("position: ") + 
+                    "x=" + std::to_string(averge_vel[0]) + 
+                    " y=" + std::to_string(averge_vel[1]) + 
+                    " z=" + std::to_string(averge_vel[2]),
+                    cv::Point(10, 70), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                    cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 
         // 显示速度 averge_v
         cv::putText(frame, std::string("c_pos: ") + 
@@ -1104,13 +1068,9 @@ void read::reda(ros::NodeHandle& nh) {
                     cv::Point(10, 270), cv::FONT_HERSHEY_SIMPLEX, 0.5,
                     cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 
-# ifdef SAVE_VIDEO
-        out.write(frame);
-# endif
-# ifdef SCREEN_SHOW
+        // out.write(frame);
         // 显示图像
         cv::imshow("ArUco Detection", frame);
-# endif
         // 按下 'q' 键退出循环
         if (cv::waitKey(1) == 'q')
         {
@@ -1118,11 +1078,9 @@ void read::reda(ros::NodeHandle& nh) {
         }
     }
 
-# ifdef SAVE_VIDEO
     // 释放资源
-    out.release();
-    cv::destroyAllWindows();
-# endif
+    // out.release();
+    // cv::destroyAllWindows();
 }
 
 void read::onInit() {
