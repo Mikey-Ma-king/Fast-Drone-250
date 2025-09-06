@@ -471,7 +471,8 @@ void gos_listener::pose_cb_land(const geometry_msgs::PoseStamped::ConstPtr& msg)
 }
 
 UAVStateListener1::UAVStateListener1() 
-        : trigger_condition_met(false),  T1(Eigen::Vector3d::Zero()), R1(Eigen::Matrix3d::Identity()) {
+        : trigger_condition_met(false),  T1(Eigen::Vector3d::Zero()), R1(Eigen::Matrix3d::Identity()),
+          vins_input_count(0) {
         
     #ifndef SIMULATE
         svo_sub = nh.subscribe<geometry_msgs::PoseWithCovarianceStamped>("/svo/pose_imu", 3, &UAVStateListener1::svo_callback, this);
@@ -496,46 +497,57 @@ void UAVStateListener1::flow_callback(const nav_msgs::Odometry::ConstPtr& msg){
 
 
 void UAVStateListener1::pose_cb(const nav_msgs::Odometry::ConstPtr& msg) {
-        Eigen::Vector3d current_position(msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z);
-        list.push_back(current_position);
-
-        if (list.size() == 5) {
-            // 计算平均位置 T1
-            T1 = std::accumulate(list.begin(), list.end(), Eigen::Vector3d(0,0,0),
-            [](const Eigen::Vector3d& a, const Eigen::Vector3d& b) {
-                return a + b;
-            });
-
-            // 检查 list.size() 是否为 0，防止除以 0 的错误
-            if (list.size() > 0) {
-                T1 /= static_cast<double>(list.size());
-            } else {
-                T1 = Eigen::Vector3d::Zero(); // 如果 list 为空，T1 设为零向量
-            }
-
-            vins_p = T1;
-
-            // 获取四元数并转化为旋转矩阵 R1
-            tf::Quaternion quat(
-                msg->pose.pose.orientation.x,
-                msg->pose.pose.orientation.y,
-                msg->pose.pose.orientation.z,
-                msg->pose.pose.orientation.w
-            );
-            tf::Matrix3x3 tf_matrix(quat);
-
-            // 将 tf::Matrix3x3 转换为 Eigen::Matrix3d
-            R1 << tf_matrix[0][0], tf_matrix[0][1], tf_matrix[0][2],
-                tf_matrix[1][0], tf_matrix[1][1], tf_matrix[1][2],
-                tf_matrix[2][0], tf_matrix[2][1], tf_matrix[2][2];
-
-            // 触发条件达成
-            trigger_condition_met = true;
-
-            // 清空列表
-            list.clear();
-        }
+    
+    // 只保存必要的位置、速度和角度信息，而不是完整的消息
+    vins_states.push_back(VINSState(msg));
+    
+    // 动态维护vins_states长度：超过延迟数量5倍时，删除前面3倍
+    if (vins_states.size() > FIXED_DELAY * 5) {
+        vins_states.erase(vins_states.begin(), vins_states.begin() + FIXED_DELAY * 3);
     }
+    
+    // 增加VINS输入计数器
+    vins_input_count++;
+    
+    // 每5次输入更新一次T1和R1
+    if (vins_input_count >= UPDATE_INTERVAL && vins_states.size() > FIXED_DELAY + UPDATE_INTERVAL) {
+        // 直接在这里更新T1和R1
+
+        // 计算延迟后的起始索引
+        int start_idx = vins_states.size() - FIXED_DELAY - UPDATE_INTERVAL;
+        int end_idx = vins_states.size() - FIXED_DELAY;
+        
+        // 确保索引在有效范围内
+        if (start_idx < 0) {
+            start_idx = 0;
+            end_idx = std::min(UPDATE_INTERVAL, static_cast<int>(vins_states.size()));
+        }
+        
+        // 计算延迟后的平均位置（5阶平均）- 使用std::accumulate避免for循环
+        T1 = std::accumulate(
+            vins_states.begin() + start_idx, 
+            vins_states.begin() + end_idx, 
+            Eigen::Vector3d(0,0,0),  // 使用与能行代码相同的初始值
+            [](const Eigen::Vector3d& sum, const VINSState& state) {
+                return sum + state.position;
+            }
+        );
+        T1 /= (end_idx - start_idx);
+        
+        // 取中间时刻的值提取方向
+        int rotation_idx = start_idx + (end_idx - start_idx) / 2;
+        if (rotation_idx >= vins_states.size()) {
+            rotation_idx = vins_states.size() - 1;
+        }
+        
+        // 更新T1和R1
+        R1 = vins_states[rotation_idx].orientation.toRotationMatrix();
+        
+        vins_input_count = 0;  // 重置计数器
+    }
+}
+
+
 #ifdef SIMULATE
     void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseStamped>& msg) {
 #else
@@ -691,6 +703,10 @@ double rotationMatrixToEulerAngles(const Eigen::Matrix3d& R) {
 void read::reda(ros::NodeHandle& nh) {
     std::cout<<"here"<<std::endl;
     target_pose_pub = nh.advertise<nav_msgs::Odometry>("/target_ekf_odom", 10);
+#ifdef DELAY_TEST
+    // 发布延迟补偿后的VINS消息
+    delayed_vins_pub = nh.advertise<nav_msgs::Odometry>("/vins_delayed", 10);
+#endif
 
     ros::Publisher odom_pub = nh.advertise<nav_msgs::Odometry>("/vins_fusion/imu_propagate", 10);
     ros::Timer timer = nh.createTimer(ros::Duration(1.0 / 200.0), 
@@ -745,13 +761,13 @@ void read::reda(ros::NodeHandle& nh) {
 
     Eigen::Vector3d T3_1;
     Eigen::Vector3d pre_vel{0.0,0.0,0.0};
-    double fx = 1041.26851, fy = 1039.10475;
-    double cx = 648.887480, cy = 352.903313;
-       
-    double k1 = 0.0;
-    double k2 = 0.0;
-    double p1 = 0.0;
-    double p2 = 0.0;
+    double fx = 734.804843, fy = 734.561878;
+    double cx = 590.087740, cy = 422.783965;
+
+    double k1 = -0.037109;
+    double k2 = 0.011897;
+    double p1 = -0.004764;
+    double p2 = 0.001270;
     double k3 = 0.0;
 
     cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 
@@ -778,7 +794,7 @@ void read::reda(ros::NodeHandle& nh) {
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
     // cap.set(cv::CAP_PROP_EXPOSURE, -4);
-    cap.set(cv::CAP_PROP_FPS, 120);
+    cap.set(cv::CAP_PROP_FPS, 30);
     double fps = cap.get(cv::CAP_PROP_FPS);
     std::cout << "当前帧率: " << fps << " FPS" << std::endl;
    
@@ -791,7 +807,7 @@ void read::reda(ros::NodeHandle& nh) {
     std::string time_video(buffer);
     std::string unique_filename = "/home/pc/Fast-Perching/output_video_" + time_video + ".avi";
     int fourcc_video = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-    cv::VideoWriter out(unique_filename, fourcc_video, 120.0, cv::Size(1280,720));
+    cv::VideoWriter out(unique_filename, fourcc_video, 30.0, cv::Size(1280,720));
 
     std::map<int, Eigen::Vector3d> markerPositions;
 
@@ -819,18 +835,43 @@ void read::reda(ros::NodeHandle& nh) {
         }
         // 转换为灰度图像，非必要
         cv::Mat gray;
+        frame.convertTo(frame, -1, 1.1, 20); // 轻微提高对比度和亮度
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
         std::vector<int> markerIds;
         std::vector<std::vector<cv::Point2f>> markerCorners, rejectedCandidates;
         cv::aruco::detectMarkers(gray, dictionary, markerCorners, markerIds, parameters, rejectedCandidates);
         
-        std::pair<Eigen::Vector3d, Eigen::Matrix3d> T1_R1 = uav_state_listener.get_T1_R1();
-        Eigen::Vector3d TT= T1_R1.first;
-        cv::putText(frame, std::string("vins: ") + 
-                    "x=" + std::to_string(TT[0]) + 
-                    " y=" + std::to_string(TT[1]) + 
-                    " z=" + std::to_string(TT[2]),
+        std::pair<Eigen::Vector3d, Eigen::Matrix3d> T1_R1_pair = uav_state_listener.get_T1_R1();
+        T1 = T1_R1_pair.first;
+        R1 = T1_R1_pair.second;
+        
+#ifdef DELAY_TEST
+        // 发布延迟补偿后的VINS消息
+        nav_msgs::Odometry delayed_vins_msg;
+        delayed_vins_msg.header.stamp = ros::Time::now();
+        delayed_vins_msg.header.frame_id = "world";
+        delayed_vins_msg.child_frame_id = "vins_delayed";
+        
+        // 设置位置
+        delayed_vins_msg.pose.pose.position.x = T1[0];
+        delayed_vins_msg.pose.pose.position.y = T1[1];
+        delayed_vins_msg.pose.pose.position.z = T1[2];
+        
+        // 设置旋转（从旋转矩阵转换为四元数）
+        Eigen::Quaterniond delayed_q(R1);
+        delayed_vins_msg.pose.pose.orientation.w = delayed_q.w();
+        delayed_vins_msg.pose.pose.orientation.x = delayed_q.x();
+        delayed_vins_msg.pose.pose.orientation.y = delayed_q.y();
+        delayed_vins_msg.pose.pose.orientation.z = delayed_q.z();
+        
+        // 发布消息
+        delayed_vins_pub.publish(delayed_vins_msg);
+#endif
+        cv::putText(frame, std::string("vins(delayed): ") + 
+                    "x=" + std::to_string(T1[0]) + 
+                    " y=" + std::to_string(T1[1]) + 
+                    " z=" + std::to_string(T1[2]),
                     cv::Point(10, 110), cv::FONT_HERSHEY_SIMPLEX, 0.5,
                     cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 
@@ -838,9 +879,6 @@ void read::reda(ros::NodeHandle& nh) {
         if (markerIds.size() > 0)
         {
             flag1+=1;
-            std::pair<Eigen::Vector3d, Eigen::Matrix3d> T1_R1_pair = uav_state_listener.get_T1_R1();
-            T1 = T1_R1_pair.first;
-            R1 = T1_R1_pair.second;
 
             cv::aruco::drawDetectedMarkers(frame, markerCorners, markerIds);
 
@@ -869,7 +907,8 @@ void read::reda(ros::NodeHandle& nh) {
 
             Eigen::Vector3d position{0, 0, 0};
             Eigen::Vector3d averagePosition{0, 0, 0};
-            double positionCount = 0;
+            double averageDeg = 0;
+            double weight_count = 0;
 
             for (int i = 0; i < markerIds.size(); ++i)
             {
@@ -913,66 +952,77 @@ void read::reda(ros::NodeHandle& nh) {
                 //位置计算
                 R2 = M_camera2drone * M_tag2camera * R2;
                 position = R1 * T3 + T1;
+#ifdef DELAY_TEST
+                position = R1 * T3;
+#endif
 
                 //偏航角计算
                 Eigen::Matrix3d pose = R1 * R2;
-                Eigen::Quaterniond q(correctYaw(pose));
+                // Eigen::Matrix3d pose = R2;
+                // Eigen::Quaterniond q(correctYaw(pose));
                 double deg = rotationMatrixToEulerAngles(pose);
                 glo_deg = deg;
 
                 if (currentMarkerId == 29)
-                    fin_deg = 0.2*last_deg + 0.8*deg;
+                    averageDeg += (deg * 0.8);
                 else if (currentMarkerId == 33)
-                    fin_deg = 0.5*last_deg + 0.5*deg;
+                    averageDeg += (deg * 0.5);
                 else if (currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3)
-                    fin_deg = 0.35*last_deg + 0.65*deg;
+                    averageDeg += (deg * 0.65);
 
-                fin_deg = mf1.update(fin_deg);
-                if(std::fabs(fin_deg-last_deg)<3)
-                    fin_deg = last_deg;
-                else
-                    last_deg = fin_deg;
-                fin_deg = fin_deg*M_PI/180;
-
-
-                // position.y() = position.y() + 0.1*std::cos(fin_deg);
-                // position.x() = position.x() - 0.1*std::sin(fin_deg);
-                
                 if (currentMarkerId == 29){
                     averagePosition += (position * 0.8);
-                    positionCount += 0.8;
                 }
                 else if (currentMarkerId == 33){
                     averagePosition += (position * 0.5);
-                    positionCount += 0.5;
                 }
                 else if (currentMarkerId == 0){
                     position.x() = position.x() - 0.18*std::cos(fin_deg) + 0.10*std::sin(fin_deg);
                     position.y() = position.y() - 0.18*std::sin(fin_deg) - 0.10*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
-                    positionCount += 0.65;
                 }
                 else if (currentMarkerId == 1){
                     position.x() = position.x() + 0.22*std::cos(fin_deg) + 0.10*std::sin(fin_deg);
                     position.y() = position.y() + 0.22*std::sin(fin_deg) - 0.10*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
-                    positionCount += 0.65;
                 }
                 else if (currentMarkerId == 2){
                     position.x() = position.x() + 0.22*std::cos(fin_deg) - 0.18*std::sin(fin_deg);
                     position.y() = position.y() + 0.22*std::sin(fin_deg) + 0.18*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
-                    positionCount += 0.65;
                 }
                 else if (currentMarkerId == 3){
                     position.x() = position.x() - 0.18*std::cos(fin_deg) - 0.18*std::sin(fin_deg);
                     position.y() = position.y() - 0.18*std::sin(fin_deg) + 0.18*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
-                    positionCount += 0.65;
                 }
+
+                if(currentMarkerId == 29)
+                    weight_count += 0.8;
+                else if(currentMarkerId == 33)
+                    weight_count += 0.5;
+                else if(currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3)
+                    weight_count += 0.65;
+
             }
 
-            position = averagePosition / positionCount;
+            double this_deg = averageDeg / weight_count;
+            if (std::fabs(this_deg-fin_deg) > 3 &&
+            std::fabs(this_deg-fin_deg + 360) > 3 &&
+            std::fabs(this_deg-fin_deg - 360) > 3)
+            {
+                // 这里不再使用mf1滤波，改为类似callback中yaw offset的滤波方式
+                double delta_yaw = this_deg * M_PI / 180 - fin_deg;
+                // 处理角度环绕问题
+                if (delta_yaw > M_PI) {
+                    delta_yaw -= 2 * M_PI;
+                } else if (delta_yaw < -M_PI) {
+                    delta_yaw += 2 * M_PI;
+                }
+                fin_deg += 0.5 * delta_yaw; // 0.3为滤波系数，可根据实际调整
+            }
+
+            position = averagePosition / weight_count;
             if((ros::Time::now() - target_start_time).toSec() > 1.0)
               {
                   pos.clear();
@@ -1055,17 +1105,16 @@ void read::reda(ros::NodeHandle& nh) {
                         target_detect_list.erase(target_detect_list.begin());
                         target_detect_list.push_back(state);  
 
-                        int bezier_flag = tgpredict.TrackingGeneration(5,5,target_detect_list);
+                        int bezier_flag = tgpredict.TrackingGeneration(5, 5, target_detect_list);  // 从(5,5)改为(3,3)，减少控制点和预测段数，提高响应速度
                         if(bezier_flag==0){
                             predict_state_list = tgpredict.getStateListFromBezier(_PREDICT_SEG);
-                            odom_msg.twist.twist.linear.x = 1.0*predict_state_list[0](3);
-                            odom_msg.twist.twist.linear.y = 1.0*predict_state_list[0](4);
+                            odom_msg.twist.twist.linear.x = 1.0*predict_state_list[2](3);
+                            odom_msg.twist.twist.linear.y = 1.0*predict_state_list[2](4);
                             odom_msg.twist.twist.linear.z = 0;
                             pre_vel[0] = predict_state_list[0](3);
                             pre_vel[1] = predict_state_list[0](4);
                         }      
                     }
-                    // if(land_triger == 1)
                     target_pose_pub.publish(odom_msg);
 
                 }

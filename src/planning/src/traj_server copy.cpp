@@ -36,7 +36,6 @@ bool receive_traj_ = false;
 bool flight_start_ = false;
 Eigen::Vector3d last_p_;
 double last_yaw_ = 0;
-bool precise_mode = false;
 
 double Kt = 0.6;
 bool triger_received_ = false;
@@ -55,21 +54,11 @@ int last_target_count = 0;
 bool target_receive = false;
 
 // dog_pos 相关变量（只保留速度信息）
-Eigen::Vector3d raw_hc14_dog_vel{0,0,0};
-double raw_hc14_dog_yaw = 0.0;  // 狗的通信获得的偏航角
-bool raw_hc14_dog_pos_received = false;
-int raw_hc14_dog_pos_count = 0;
-int last_raw_hc14_dog_pos_count = 0;
-int last_hc14_dog_pos_timer = 0;  // dog_pos专用的timer
-int yaw_offset_exceed_count = 0;
-
-// 处理后的hc14_dog信息
 Eigen::Vector3d hc14_dog_vel{0,0,0};
-double hc14_dog_yaw = 0.0;
-bool hc14_offset_ready = false;  // hc14_dog信息是否可用
-
-// Yaw差值补偿相关变量
-double yaw_offset = 0.0;  // target_yaw和raw_hc14_dog_yaw之间的差值（经过滤波）
+bool hc14_dog_pos_received = false;
+int hc14_dog_pos_count = 0;
+int last_hc14_dog_pos_count = 0;
+int last_hc14_dog_pos_timer = 0;  // dog_pos专用的timer
 
 double kp = 1.2;
 double tracking_dist_ = 1.5;
@@ -106,44 +95,28 @@ std::deque<double> error_targetz_buffer;
 
 int target_land_flag = 0;
 
-
-// 角速度控制相关参数
-double yaw_kp = 1.0;  // 偏航角速度控制增益
-double max_yaw_rate = 1.3;  // 最大偏航角速度限制 (rad/s)
-
-
-double x_p = 0.4;
-double x_i = 1.1;
+double x_p = 0.6;
+double x_i = 1.2;
 double x_d = 0.0;
 double x_d_max = 0.12;
-double v_forward_offset_x = -0.6;
-double integral_limit_x = 1;
-double dog_forward_coeff_x = 0.25; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_x = 0.45; // 系数可根据实际调整，目前是三次函数拟合
+double vx_offset = 0.0;
+double integral_limit_x = 2.0;
 
-double y_p = 0.4;
-double y_i = 0.8;
+double y_p = 0.6;
+double y_i = 1.0;
 double y_d = 0.0;
 double y_d_max = 0.12;
-double v_forward_offset_y = 0.25;
-double integral_limit_y = 1;
-double dog_forward_coeff_y = 0.2; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_y = 0.4; // 系数可根据实际调整，目前是三次函数拟合
+double vy_offset = 0.0;
+double integral_limit_y = 1.5;
 
 double z_p = 0.3;
-double z_i = 0.1;
-double z_d = 0.0;
+double z_i = 0.3;
+double z_d = 1.8;
 double z_d_max = 0.12;
-double v_forward_offset_z = 0.0;
+double vz_offset = 0.0;
 double integral_limit_z = 1.0;
 
-#ifdef SIMULATE
-v_forward_offset_x = 0.0;
-v_forward_offset_y = 0.0;
-v_forward_offset_z = 0.0;
-#endif
-
-std::vector<double> land_height_limit = {1.5, 2.0};
+std::vector<double> land_height_limit = {1.0, 2.0};
 
 std::vector<Eigen::Vector3d> target_p_list,target_v_list;
 
@@ -174,6 +147,26 @@ struct PIDParams {
   double Ki;
   double Kd;
 };
+
+
+// 均值滤波器函数实现
+double applyMeanFilter(std::deque<double>& buffer, double new_value, int window_size) {
+  // 添加新值到缓冲区
+  buffer.push_back(new_value);
+  
+  // 如果缓冲区超过窗口大小，移除最旧的值
+  if (buffer.size() > window_size) {
+      buffer.pop_front();
+  }
+  
+  // 计算平均值
+  double sum = 0.0;
+  for (double value : buffer) {
+      sum += value;
+  }
+  
+  return sum / buffer.size();
+}
 
 class BPNeuralNetwork {
   private:
@@ -628,263 +621,272 @@ void cmdCallback(const ros::TimerEvent &e) {
     return;
   if (stop_triger_received_)
     return;
-  if (!traj_initialized)
-    return;
-
-  quadrotor_msgs::PositionCommand cmd;
-  cmd.header.stamp = ros::Time::now();
-  cmd.header.frame_id = "world";
-  cmd.trajectory_flag = quadrotor_msgs::PositionCommand::TRAJECTORY_STATUS_READY;
-  cmd.trajectory_id = 0;
-  
-  double targetx, targety, targetz;
-  double target_vx, target_vy, target_vz;
-  double error_targetx, error_targety, error_targetz;
-  double target_yaw;
-
-  Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-  if (!precise_mode && ((vins_p - target_top).norm() < 1.0 || land_triger_received_))
+  if (!receive_traj_ || true)
   {
-    precise_mode = true;
-    std::cout << "precise_mode: true" << std::endl;
-  }
-  else if (precise_mode && ((vins_p - target_top).norm() > 2.0 && !land_triger_received_))
-  {
-    precise_mode = false;
-    std::cout << "precise_mode: false" << std::endl;
-  }
+    quadrotor_msgs::PositionCommand cmd;
+    cmd.header.stamp = ros::Time::now();
+    cmd.header.frame_id = "world";
+    cmd.trajectory_flag = quadrotor_msgs::PositionCommand::TRAJECTORY_STATUS_READY;
+    cmd.trajectory_id = 0;
+    
+    // 这里应该比较vins和target头顶land_height_limit高度的欧氏距离
+    double targetx, targety, targetz;
+    double target_vx, target_vy, target_vz;
+    double error_targetx, error_targety, error_targetz;
 
-  // 计算角度差,hc14_dog_yaw有点晃
-  if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-    target_yaw = hc14_dog_yaw;
-  } else {
-    target_yaw = target_dog_yaw;
-  }
-  // target_yaw = target_dog_yaw;
-
-  // double angle_diff = atan2(sin(target_yaw - vins_yaw), cos(target_yaw - vins_yaw));
-  double angle_diff = target_yaw - vins_yaw;
-  if (angle_diff > M_PI) {
-    angle_diff -= 2 * M_PI;
-  } else if (angle_diff < -M_PI) {
-    angle_diff += 2 * M_PI;
-  }
-
-
-  if (!precise_mode) {
-    target_vx = mpc_v.x();
-    target_vy = mpc_v.y();
-    target_vz = mpc_v.z();
-
-    targetx = mpc_p.x();
-    targety = mpc_p.y();
-    targetz = mpc_p.z();
-
-    error_targetx = targetx - vins_p.x();
-    error_targety = targety - vins_p.y();
-    error_targetz = targetz - vins_p.z();
-
-  } else {
-    if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-      target_vx = hc14_dog_vel.x();
-      target_vy = hc14_dog_vel.y();
-      
-      // position也加上前馈
-      double raw_offset_x = (raw_hc14_dog_vel.x() >= 0 ? dog_forward_coeff_x : dog_backward_coeff_x) * std::pow(raw_hc14_dog_vel.x(), 3);
-      double raw_offset_y = (raw_hc14_dog_vel.y() >= 0 ? dog_forward_coeff_y : dog_backward_coeff_y) * std::pow(raw_hc14_dog_vel.y(), 3);
-
-      double cos_yaw = cos(target_yaw);
-      double sin_yaw = sin(target_yaw);
-      targetx = target_p.x() + std::max(-1.0, std::min(1.0, raw_offset_x * cos_yaw - raw_offset_y * sin_yaw));
-      targety = target_p.y() + std::max(-1.0, std::min(1.0, raw_offset_x * sin_yaw + raw_offset_y * cos_yaw));
-
-      
-    } else {
-      target_vx = target_v.x();
-      target_vy = target_v.y();
-
-      targetx = target_p.x();
-      targety = target_p.y();
-    }
-
-    if (!land_triger_received_)
+    if (traj_initialized)
     {
-      targetz = std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z()));
-      target_vz = target_v.z();
-    }
-    else
-    {
-      targetz = vins_p.z() - 0.4;
-      target_vz = target_v.z() - 0.08;
-    }
-
-    error_targetx = targetx - vins_p.x();
-    error_targety = targety - vins_p.y();
-    error_targetz = targetz - vins_p.z();
-
-  }
-
-  if(last_error_targetx == 0){
-    last_error_targetx = error_targetx;
-    last_error_targety = error_targety;
-    last_error_targetz = error_targetz;
-  }
-
-  cmd.position.x = targetx;
-  cmd.position.y = targety;
-  cmd.position.z = targetz;
-
-  // BPNN_count ++;
-  // if (BPNN_count > 4) {
-  // auto params_x = pid_x.compute(error_targetx, error_targetx - last_error_targetx, mpc_v.x());
-  // auto params_y = pid_y.compute(error_targety, error_targety - last_error_targety, mpc_v.y());
-  // auto params_z = pid_z.compute(error_targetz,, 0.0);
-  // BPNN_count -= 4;
-  // // std::cout << "derror_x: " << delta_error_x << " derror_y: " << delta_error_y << std::endl;
-  // }
-  // const double adaptive_kp_x = pid_x.get_parm().Kp;
-  // const double adaptive_ki_x = pid_x.get_parm().Ki;
-  // const double adaptive_kd_x = pid_x.get_parm().Kd;
+      Eigen::Vector2d land_mpc_velocity;
 
 
-  // const double adaptive_kp_y = pid_y.get_parm().Kp;
-  // const double adaptive_ki_y = pid_y.get_parm().Ki;
-  // const double adaptive_kd_y = pid_y.get_parm().Kd;
+      Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
+      if ((vins_p - target_top).norm() > 0.5 && !land_triger_received_) { // 如果无人机到目标头顶距离大于 2.0，使用mpc
+        targetx = mpc_p.x();
+        targety = mpc_p.y();
+        targetz = mpc_p.z();
 
+        error_targetx = targetx - vins_p.x();
+        error_targety = targety - vins_p.y();
+        error_targetz = targetz - vins_p.z();
 
-  // const double adaptive_kp_z = pid_z.get_parm().Kp;
-  // const double adaptive_ki_z = pid_z.get_parm().Ki;
-  // const double adaptive_kd_z = pid_z.get_parm().Kd;
-  
-
-  // 以后可能会用到第二套pid
-  if (precise_mode) {
-    cmd.velocity.x = target_vx + x_p * error_targetx + x_i * intergral_targetx + std::max(std::min(x_d * (error_targetx - last_error_targetx),x_d_max),-x_d_max);
-    cmd.velocity.y = target_vy + y_p * error_targety + y_i * intergral_targety + std::max(std::min(y_d * (error_targety - last_error_targety),y_d_max),-y_d_max);
-    cmd.velocity.z = target_vz + z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz),z_d_max),-z_d_max);
-  } else {
-    cmd.velocity.x = target_vx + x_p * error_targetx + x_i * intergral_targetx + std::max(std::min(x_d * (error_targetx - last_error_targetx),x_d_max),-x_d_max);
-    cmd.velocity.y = target_vy + y_p * error_targety + y_i * intergral_targety + std::max(std::min(y_d * (error_targety - last_error_targety),y_d_max),-y_d_max);
-    cmd.velocity.z = target_vz + z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz),z_d_max),-z_d_max);
-  }
-  
-
-  if(land_triger_received_){
-    // Eigen::Vector3d BLSC_velocity;
-    // BLSCController(vins_p, vins_v, mpc_p, mpc_v, BLSC_velocity);
-    // cmd.velocity.x = BLSC_velocity.x();
-    // cmd.velocity.y = BLSC_velocity.y();
-    // cmd.velocity.z = BLSC_velocity.z();
-
-    // 降落过程中丢失目标
-    if (!target_receive) {
-      if (target_receive_triger == 1){
-        target_receive_triger = 0;
-        target_lost_time = ros::Time::now();
-      }
-
-      double target_lost_time_gap = (ros::Time::now() - target_lost_time).toSec();
-      double target_lost_v_decay = exp(-1.0 * target_lost_time_gap / 10);
-      
-      // Landing模式下的velocity前馈控制
-      if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-        // 基于dog_pos的velocity前馈                
-        
-        cmd.velocity.x = target_vx;
-        cmd.velocity.y = target_vy;
+        target_vx = mpc_v.x();
+        target_vy = mpc_v.y();
+        target_vz = mpc_v.z();
 
       } else {
-        // 如果没有dog_pos信息，使用原来的控制
-        cmd.velocity.x = target_vx * target_lost_v_decay;
-        cmd.velocity.y = target_vy * target_lost_v_decay;
+        targetx = target_p.x();
+        targety = target_p.y();
+        if (!land_triger_received_)
+          targetz = std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z()));
+        else
+          targetz = vins_p.z() - 0.4;
+
+        // 计算原始误差：目标位置 - VINS位置
+        double raw_error_targetx = targetx - vins_p.x();
+        double raw_error_targety = targety - vins_p.y();
+        double raw_error_targetz = targetz - vins_p.z();
+        
+        // 对误差信号进行均值滤波
+        // error_targetx = applyMeanFilter(error_targetx_buffer, raw_error_targetx, 3);
+        // error_targety = applyMeanFilter(error_targety_buffer, raw_error_targety, 3);
+        // error_targetz = applyMeanFilter(error_targetz_buffer, raw_error_targetz, 3);
+        
+        error_targetx = raw_error_targetx;
+        error_targety = raw_error_targety;
+        error_targetz = raw_error_targetz;
+
+
+        // 计算滤波后的目标位置：滤波后的误差 + VINS位置
+        targetx = error_targetx + vins_p.x();
+        targety = error_targety + vins_p.y();
+        targetz = error_targetz + vins_p.z();
+
+        target_vx = target_v.x();
+        target_vy = target_v.y();
+        target_vz = target_v.z();
+
+        // target_vx = 0.0;
+        // target_vy = 0.0;
+        // target_vz = 0.0;
       }
 
-      // 根据发布时间间隔0.015s，假设当前速度匀速，预测下一个时刻的位置
-      cmd.position.x = vins_p.x() + cmd.velocity.x * 0.015;
-      cmd.position.y = vins_p.y() + cmd.velocity.y * 0.015;
-      cmd.velocity.z = -0.08;
+      if(last_error_targetx == 0){
+        last_error_targetx = error_targetx;
+        last_error_targety = error_targety;
+        last_error_targetz = error_targetz;
+      }
+      cmd.position.x = targetx;
+      cmd.position.y = targety;
+      cmd.position.z = targetz;
+
+    //   BPNN_count ++;
+    //   if (BPNN_count > 4) {
+    //   auto params_x = pid_x.compute(error_targetx, error_targetx - last_error_targetx, mpc_v.x());
+    //   auto params_y = pid_y.compute(error_targety, error_targety - last_error_targety, mpc_v.y());
+    //   auto params_z = pid_z.compute(error_targetz,, 0.0);
+    //   BPNN_count -= 4;
+    //   // std::cout << "derror_x: " << delta_error_x << " derror_y: " << delta_error_y << std::endl;
+    //   }
+    //   const double adaptive_kp_x = pid_x.get_parm().Kp;
+    //   const double adaptive_ki_x = pid_x.get_parm().Ki;
+    //   const double adaptive_kd_x = pid_x.get_parm().Kd;
+
+    
+    //   const double adaptive_kp_y = pid_y.get_parm().Kp;
+    //   const double adaptive_ki_y = pid_y.get_parm().Ki;
+    //   const double adaptive_kd_y = pid_y.get_parm().Kd;
+
+    
+    //   const double adaptive_kp_z = pid_z.get_parm().Kp;
+    //   const double adaptive_ki_z = pid_z.get_parm().Ki;
+    //   const double adaptive_kd_z = pid_z.get_parm().Kd;
+    
+      if(!land_triger_received_){
+        // cmd.velocity.x = mpc_v.x() + 0.4 * error_targetx + std::max(std::min(1.8 * (error_targetx - last_error_targetx),0.12),-0.12);
+        // cmd.velocity.y = mpc_v.y() + 0.6 * error_targety + 0.3 * intergral_targety + std::max(std::min(2.5 * (error_targety - last_error_targety),0.12),-0.12);
+        // cmd.velocity.z = mpc_v.z() + 0.3 * error_targetz + 0.3 * intergral_targetz + std::max(std::min(1.8 * (error_targetz - last_error_targetz),0.12),-0.12);
+
+        // 基础PID控制
+        double base_vel_x = target_vx * x_p * error_targetx + x_i * intergral_targetx + std::max(std::min(x_d * (error_targetx - last_error_targetx),x_d_max),-x_d_max);
+        double base_vel_y = target_vy * y_p * error_targety + y_i * intergral_targety + std::max(std::min(y_d * (error_targety - last_error_targety),y_d_max),-y_d_max);
+        double base_vel_z = target_vz * z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz),z_d_max),-z_d_max);
+        
+        // 添加基于dog_pos的velocity前馈（非landing模式）
+        if (hc14_dog_pos_received) {
+          double dog_velocity_ff_gain = 0.2;  // 前馈增益系数（非landing模式下较小）
+          
+          // 加权平均：原来的值 * (1-增益) + 前馈值 * 增益
+          cmd.velocity.x = (1.0 - dog_velocity_ff_gain) * base_vel_x + dog_velocity_ff_gain * hc14_dog_vel.x();
+          cmd.velocity.y = (1.0 - dog_velocity_ff_gain) * base_vel_y + dog_velocity_ff_gain * hc14_dog_vel.y();
+          cmd.velocity.z = base_vel_z;
+        } else {
+          // 如果没有dog_pos信息，使用基础控制
+          cmd.velocity.x = base_vel_x;
+          cmd.velocity.y = base_vel_y;
+          cmd.velocity.z = base_vel_z;
+        }
+
+        // Eigen::Vector3d BLSC_velocity;
+        // BLSCController(vins_p, vins_v, mpc_p, mpc_v, BLSC_velocity);
+        // cmd.velocity.x = BLSC_velocity.x();
+        // cmd.velocity.y = BLSC_velocity.y();
+        // cmd.velocity.z = BLSC_velocity.z();
+      }
+      else{
+        // cmd.velocity.x = mpc_v.x() + 0.1 * error_targetx + std::max(std::min(1.8 * (error_targetx - last_error_targetx),0.12),-0.12);
+        // cmd.velocity.y = mpc_v.y() + 0.1 * error_targety + 0.3 * intergral_targety + std::max(std::min(2.5 * (error_targety - last_error_targety),0.12),-0.12);
+        // cmd.velocity.z = mpc_v.z() + 0.1 * error_targetz + 0.3 * intergral_targetz + std::max(std::min(1.8 * (error_targetz - last_error_targetz),0.12),-0.12);
+        
+        // Landing模式下的基础PID控制
+        double base_vel_x = target_vx * x_p * error_targetx + x_i * intergral_targetx + std::max(std::min(x_d * (error_targetx - last_error_targetx),0.12),-0.12);
+        double base_vel_y = target_vy * y_p * error_targety + y_i * intergral_targety + std::max(std::min(y_d * (error_targety - last_error_targety),0.12),-0.12);
+        double base_vel_z = target_vz * z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz),0.12),-0.12);
+        
+        // 添加基于dog_pos的velocity前馈（landing模式）
+        if (hc14_dog_pos_received) {
+          double dog_velocity_ff_gain = 0.5;  // 前馈增益系数（landing模式下较大）
+          
+          // 加权平均：原来的值 * (1-增益) + 前馈值 * 增益
+          cmd.velocity.x = (1.0 - dog_velocity_ff_gain) * base_vel_x + dog_velocity_ff_gain * hc14_dog_vel.x();
+          cmd.velocity.y = (1.0 - dog_velocity_ff_gain) * base_vel_y + dog_velocity_ff_gain * hc14_dog_vel.y();
+          cmd.velocity.z = base_vel_z;
+        } else {
+          // 如果没有dog_pos信息，使用基础控制
+          cmd.velocity.x = base_vel_x;
+          cmd.velocity.y = base_vel_y;
+          cmd.velocity.z = base_vel_z;
+        }
+        
+        // Eigen::Vector3d BLSC_velocity;
+        // BLSCController(vins_p, vins_v, mpc_p, mpc_v, BLSC_velocity);
+        // cmd.velocity.x = BLSC_velocity.x();
+        // cmd.velocity.y = BLSC_velocity.y();
+        // cmd.velocity.z = BLSC_velocity.z();
+
+      }
+      last_error_targetx = error_targetx;
+      last_error_targety = error_targety;
+      last_error_targetz = error_targetz;
+
+
+      intergral_targetx = std::max(std::min(intergral_targetx + 0.01 * error_targetx, integral_limit_x), -integral_limit_x);
+      intergral_targety = std::max(std::min(intergral_targety + 0.01 * error_targety, integral_limit_y), -integral_limit_y);
+      intergral_targetz = std::max(std::min(intergral_targetz + 0.01 * error_targetz, integral_limit_z), -integral_limit_z);
+
+      if (land_triger_received_)
+      {
+        if (!target_receive) {
+          if (target_receive_triger == 1){
+            target_receive_triger = 0;
+            target_lost_time = ros::Time::now();
+          }
+
+          double target_lost_time_gap = (ros::Time::now() - target_lost_time).toSec();
+          double target_lost_v_decay = exp(-1.0 * target_lost_time_gap / 10);
+
+        //   cmd.velocity.z = -0.4;
+          cmd.position.x = target_p.x() + target_lost_time_gap * target_v.x() * target_lost_v_decay;
+          cmd.position.y = target_p.y() + target_lost_time_gap * target_v.y() * target_lost_v_decay;
+          
+          // Landing模式下的velocity前馈控制
+          if (hc14_dog_pos_received) {
+            // 基于dog_pos的velocity前馈
+            double dog_velocity_ff_gain = 0.8;  // 前馈增益系数
+            
+            // 加权平均：原来的值 * (1-增益) + 前馈值 * 增益
+            double base_vel_x_lost = target_v.x() * target_lost_v_decay;
+            double base_vel_y_lost = target_v.y() * target_lost_v_decay;
+            
+            cmd.velocity.x = (1.0 - dog_velocity_ff_gain) * base_vel_x_lost + dog_velocity_ff_gain * hc14_dog_vel.x();
+            cmd.velocity.y = (1.0 - dog_velocity_ff_gain) * base_vel_y_lost + dog_velocity_ff_gain * hc14_dog_vel.y();
+            
+          } else {
+            // 如果没有dog_pos信息，使用原来的控制
+            cmd.velocity.x = target_vx * target_lost_v_decay;
+            cmd.velocity.y = target_vy * target_lost_v_decay;
+          }
+        }
+        
+        if (flow_z < 0.15 && flow_z > 0.0)
+            land_test_count += 1;
+        else
+            land_test_count = std::max(land_test_count - 0.5, 0.0);
+
+        if (land_test_count > 20)
+        {
+          quadrotor_msgs::TakeoffLand land;
+          land.takeoff_land_cmd = 2;
+          land_pub_.publish(land);
+          land_triger_received_ = false;
+          triger_received_ = 0;
+        }
+      }
+    }
+    else {
+      return;
     }
     
-    // 丢失目标之后如果target_p变了怎么办？
-    if (flow_z < 0.10 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.2)
-        land_test_count += 1;
+    double angle_diff = atan2(sin(target_dog_yaw - vins_yaw), cos(target_dog_yaw - vins_yaw));
+    
+    // 角度限制逻辑，防止一次转角太大
+    if (std::fabs(angle_diff) > 1.5)
+      cmd.yaw = 0.4 * angle_diff + vins_yaw;
     else
-        land_test_count = std::max(land_test_count - 0.5, 0.0);
+      cmd.yaw = angle_diff + vins_yaw;
 
-    if (land_test_count > 5)
-    {
-      quadrotor_msgs::TakeoffLand land;
-      land.takeoff_land_cmd = 2;
-      land_pub_.publish(land);
-      land_triger_received_ = false;
-      triger_received_ = false;
-    }
+    // 先加offset
+    cmd.velocity.x += vx_offset;
+    cmd.velocity.y += vy_offset;
+    cmd.velocity.z += vz_offset;
+
+    // 再做上下限限制
+    cmd.velocity.x = std::max(-2.0, std::min(2.0, cmd.velocity.x));
+    cmd.velocity.y = std::max(-2.0, std::min(2.0, cmd.velocity.y));
+    cmd.velocity.z = std::max(-2.0, std::min(2.0, cmd.velocity.z));
+    // 位置限制在当前位置前后2m
+    cmd.position.x = std::max(vins_p.x() - 2.0, std::min(vins_p.x() + 2.0, cmd.position.x));
+    cmd.position.y = std::max(vins_p.y() - 2.0, std::min(vins_p.y() + 2.0, cmd.position.y));
+    cmd.position.z = std::max(vins_p.z() - 0.7, std::min(vins_p.z() + 0.7, cmd.position.z));
+
+
+    // 发布调试信息到plotjuggler
+    quadrotor_msgs::PositionCommand debug_msg;
+    debug_msg.header.stamp = ros::Time::now();
+    debug_msg.header.frame_id = "world";
+    debug_msg.position.x = error_targetx;  // 使用position字段存储error_targetx
+    debug_msg.position.y = error_targety;  // 使用position字段存储error_targety
+    debug_msg.position.z = error_targetz;  // 使用position字段存储error_targetz
+    debug_msg.velocity.x = intergral_targetx;  // 使用velocity字段存储积分项
+    debug_msg.velocity.y = intergral_targety;
+    debug_msg.velocity.z = intergral_targetz;
+    debug_msg.yaw = last_error_targetx;  // 使用yaw字段存储last_error_targetx
+    debug_pub_.publish(debug_msg);
+
+    pos_cmd_pub_.publish(cmd);
+    if (land_triger_received_)
+      land_mark_pub_.publish(cmd);
+    return;
   }
-
-  last_error_targetx = error_targetx;
-  last_error_targety = error_targety;
-  last_error_targetz = error_targetz;
-
-  intergral_targetx = std::max(std::min(intergral_targetx + 0.01 * error_targetx, integral_limit_x), -integral_limit_x);
-  intergral_targety = std::max(std::min(intergral_targety + 0.01 * error_targety, integral_limit_y), -integral_limit_y);
-  intergral_targetz = std::max(std::min(intergral_targetz + 0.01 * error_targetz, integral_limit_z), -integral_limit_z);
-
-   // 角度限制逻辑，防止一次转角太大
-  if (std::fabs(angle_diff) > 1.5)
-    cmd.yaw = 0.4 * angle_diff + vins_yaw;
-  else
-    cmd.yaw = angle_diff + vins_yaw;
-
-  // P控制器计算角速度
-  cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
-
-  // 先加offset
-  cmd.velocity.x += v_forward_offset_x * cos(vins_yaw) - v_forward_offset_y * sin(vins_yaw);
-  cmd.velocity.y += v_forward_offset_x * sin(vins_yaw) + v_forward_offset_y * cos(vins_yaw);
-  cmd.velocity.z += v_forward_offset_z;
-
-  // 再做上下限限制
-  cmd.velocity.x = std::max(-2.0, std::min(2.0, cmd.velocity.x));
-  cmd.velocity.y = std::max(-2.0, std::min(2.0, cmd.velocity.y));
-  cmd.velocity.z = std::max(-0.7, std::min(0.7, cmd.velocity.z));
-  
-  // 根据yaw diff大小调整position和vins_p的距离
-  // double position_scale = std::max(0.0, 1.0 - std::abs(angle_diff) / (M_PI/2)); // yaw差越大，position距离越小
-  
-  // Eigen::Vector3d original_pos(cmd.position.x, cmd.position.y, cmd.position.z);
-
-  // Eigen::Vector3d adjusted_pos = vins_p + (original_pos - vins_p) * position_scale;
-  
-  // // 应用调整后的position
-  // cmd.position.x = adjusted_pos.x();
-  // cmd.position.y = adjusted_pos.y();
-  // cmd.position.z = adjusted_pos.z();
-  
-  // // 位置限制在当前位置前后2m
-  // cmd.position.x = std::max(vins_p.x() - 2.0, std::min(vins_p.x() + 2.0, cmd.position.x));
-  // cmd.position.y = std::max(vins_p.y() - 2.0, std::min(vins_p.y() + 2.0, cmd.position.y));
-  // cmd.position.z = std::max(vins_p.z() - 1.0, std::min(vins_p.z() + 1.0, cmd.position.z));
-
-
-  // 发布调试信息到plotjuggler
-  quadrotor_msgs::PositionCommand debug_msg;
-  debug_msg.header.stamp = ros::Time::now();
-  debug_msg.header.frame_id = "world";
-  debug_msg.position.x = error_targetx;  // 使用position字段存储error_targetx
-  debug_msg.position.y = error_targety;  // 使用position字段存储error_targety
-  debug_msg.position.z = error_targetz;  // 使用position字段存储error_targetz
-  debug_msg.velocity.x = intergral_targetx;  // 使用velocity字段存储积分项
-  debug_msg.velocity.y = intergral_targety;
-  debug_msg.velocity.z = intergral_targetz;
-  debug_msg.yaw = last_error_targetx;  // 使用yaw字段存储last_error_targetx
-  debug_pub_.publish(debug_msg);
-
-  pos_cmd_pub_.publish(cmd);
-
-  if (land_triger_received_)
-    land_mark_pub_.publish(cmd);
-
-  return;
 }
 
 void traj_callback(const nav_msgs::Path::ConstPtr& msg) {
@@ -919,8 +921,7 @@ void traj_v_callback(const nav_msgs::Path::ConstPtr& msg) {
     }
 }
 
-void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
-    // 处理target_receive标志
+void reset_receive_flag(const ros::TimerEvent &event) {
     if (target_count != last_target_count) {
         target_receive = true;
         last_target_count = target_count;
@@ -935,47 +936,18 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     }
     
     // 检查dog_pos_received状态（模仿target_count的逻辑）
-    if (raw_hc14_dog_pos_count != last_raw_hc14_dog_pos_count) {
-        raw_hc14_dog_pos_received = true;
-        last_raw_hc14_dog_pos_count = raw_hc14_dog_pos_count;
+    if (hc14_dog_pos_count != last_hc14_dog_pos_count) {
+        hc14_dog_pos_received = true;
+        last_hc14_dog_pos_count = hc14_dog_pos_count;
         last_hc14_dog_pos_timer = 0;  // 重置dog_pos的timer
     } else {
         last_hc14_dog_pos_timer++;
         if (last_hc14_dog_pos_timer >= 5)  // 连续5次没有新包才重置
-        raw_hc14_dog_pos_received = false;
+        hc14_dog_pos_received = false;
     }
 
-
-    // 处理hc14_dog数据：当同时收到target和hc14数据时，维护yaw差值补偿
-    if (target_receive && raw_hc14_dog_pos_received) {
-        double current_yaw_offset = raw_hc14_dog_yaw - target_dog_yaw;
-        double yaw_offset_diff = current_yaw_offset - yaw_offset;
-        // 处理角度环绕问题
-        if (yaw_offset_diff > M_PI) {
-          yaw_offset_diff -= 2 * M_PI;
-        } else if (yaw_offset_diff < -M_PI) {
-          yaw_offset_diff += 2 * M_PI;
-        }
-
-        // 对yaw offset进行线性滤波，防止突变
-        yaw_offset += 0.05 * yaw_offset_diff;
-        
-        // 标记hc14_dog信息可用，采用计数器方式防止抖动
-        if (std::fabs(yaw_offset_diff) < 5.0/180.0 * M_PI) {
-          if (!hc14_offset_ready)
-            std::cout << "hc14_offset_ready!" << std::endl;
-          hc14_offset_ready = true;
-        }
-        if (std::fabs(yaw_offset_diff) > 45.0/180.0 * M_PI) {
-          yaw_offset_exceed_count++;
-          if (yaw_offset_exceed_count > 5) {
-            std::cout << "yaw_offset_diff too large!" << std::endl;
-            hc14_offset_ready = false;
-            yaw_offset_exceed_count = 0;
-          }
-        } else {
-          yaw_offset_exceed_count = 0;
-        }
+    if (hc14_dog_pos_received) {
+        std::cout << "hc14_dog_pos_received" << std::endl;
     }
 
     // quadrotor_msgs::PositionCommand test;
@@ -1028,25 +1000,19 @@ void auto_landing_detect(const ros::TimerEvent &event) {
     return;
   }
 
-  if (!land_triger_received_ && target_receive && 
-    hc14_offset_ready && raw_hc14_dog_pos_received &&
-    std::fabs(target_v.x() - vins_v.x()) < 0.2 && 
-    std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
-    std::fabs(target_v.z() - vins_v.z()) < 0.2 &&
-    std::fabs(target_p.x() - vins_p.x()) < 0.3 &&
-    std::fabs(target_p.y() - vins_p.y()) < 0.3 &&
-    std::fabs(target_dog_yaw - vins_yaw) < 5.0/180.0 * M_PI)
+  if (!land_triger_received_ && target_receive)
   {
-    if (land_count > 15)
+    land_count += 1;
+    Eigen::Vector3d delta_v = {target_v.x() - vins_v.x(), target_v.y() - vins_v.y(), target_v.z() - vins_v.z()};
+    if (std::fabs(delta_v[0]) < 0.2 && std::fabs(delta_v[1]) < 0.2 && std::fabs(delta_v[2]) < 0.2 && land_count > 15)
     {
       std::cout << "Auto landing triggered!" << std::endl;
       // land_triger_received_ = true;
       geometry_msgs::PoseStamped land_pose;
       land_pose.pose.position.x = 0.0;
       land_triger_pub.publish(land_pose);
-      land_count = 0;
+    
     }
-    land_count ++;
   }
   else {
     land_count = std::max(0.0, land_count - 1.0);
@@ -1091,7 +1057,7 @@ int main(int argc, char **argv) {
 
   ros::Timer mpc_timer = nh.createTimer(ros::Duration(0.01), mpc_callback);
 
-  ros::Timer flag_and_hc14_process_timer = nh.createTimer(ros::Duration(0.1), flag_and_hc14_process_callback);
+  ros::Timer flag_reset_timer = nh.createTimer(ros::Duration(0.1), reset_receive_flag);
 
 //   ros::Timer auto_land_timer = nh.createTimer(ros::Duration(0.2), auto_landing_detect);
 

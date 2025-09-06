@@ -4,8 +4,8 @@ import glob
 import os
 
 # 设置棋盘格尺寸
-chessboard_size = (11, 8)
-square_size = 0.045
+chessboard_size = (8, 6)
+square_size = 0.031
   # 单位：米
 
 # 准备棋盘格点的3D坐标

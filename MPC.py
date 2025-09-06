@@ -362,7 +362,6 @@ def run_while_loop():
     global target_p_dis
     global target_received_
 
-    land_init_ = 0
     land_time = time.time()
     land_height = vins_p[2]
     while not rospy.is_shutdown():
@@ -371,26 +370,15 @@ def run_while_loop():
 
         # mpc.v_max = np.array([0.6*1.2 + 0.4*abs(target_v[0]), 0.6*1.2 + 0.4*abs(target_v[1]), 0.8])
         # print("target_p:",target_p)
-        if not (land_triger == 1 and land_init_ == 1):
-            target_p_dis[0] = target_p[0]
-            target_p_dis[1] = target_p[1]
-            target_p_dis[2] = min(target_p[2] + land_height_limit[1],max(target_p[2] + land_height_limit[0], vins_p[2]))
-        else:
-            target_p_dis[0] = target_p[0]
-            target_p_dis[1] = target_p[1]
-            target_p_dis[2] = max(target_p[2] - 10.0, land_height - 0.4*(time.time() - land_time))
+        target_p_dis[0] = target_p[0]
+        target_p_dis[1] = target_p[1]
+        target_p_dis[2] = min(target_p[2] + land_height_limit[1],max(target_p[2] + land_height_limit[0], vins_p[2]))
 
         if x_opt is not None:
             drone_state,accel = traj_get_state(x_opt, u_opt, int((time.time() - MPC_clcyle + shift)/mpc.dt)*mpc.dt, mpc.dt)
         else :
             drone_state = np.array([vins_p[0], vins_p[1], vins_p[2], vins_v[0], vins_v[1], vins_v[2]])
-        
-        if (land_triger == 1 and land_init_ == 0):
-            land_init_ = 1
-            land_time = time.time()
-            land_height = vins_p[2]
-            # mpc.v_max = np.array([1.2, 1.2, 0.8])        
-            
+
         # print("time.time() - MPC_clcyle:",time.time() - MPC_clcyle)
         # print("drone_state:",drone_state)
         # print("x_opt:",x_opt)
@@ -402,16 +390,16 @@ def run_while_loop():
         #     target_p_dis = 0.3*last_last_target_p_dis + 0.4*last_target_p_dis + 0.3*target_p_dis
         #     last_last_target_p_dis = last_target_p_dis
         #     last_target_p_dis = target_p_dis
-        max_dis = 1.2 + land_triger*0.0
+        max_dis = 1.2
         if (abs(target_p_dis[0] - vins_p[0]) > max_dis) : 
             target_p_dis[0] = max_dis*(target_p_dis[0] - vins_p[0])/abs(target_p_dis[0] - vins_p[0]) + vins_p[0]
         if (abs(target_p_dis[1] - vins_p[1]) > max_dis) :
             target_p_dis[1] = max_dis*(target_p_dis[1] - vins_p[1])/abs(target_p_dis[1] - vins_p[1]) + vins_p[1]
-        target_traj = predict_target_trajectory(target_p_dis, (1 + land_triger/10*0)*target_v, mpc.N, mpc.dt , target_yaw)
+        target_traj = predict_target_trajectory(target_p_dis, target_v, mpc.N, mpc.dt , target_yaw)
         start_time = time.time()
         new_x_opt, new_u_opt = mpc.solve(drone_state, target_traj)
         end_time = time.time()
-        print("MPC solve time: " , end_time - start_time)
+        # print("MPC solve time: " , end_time - start_time)
 
         if new_x_opt is None or new_u_opt is None:
             print("MPC solver failed to find a solution.")
@@ -421,13 +409,6 @@ def run_while_loop():
         # x_opt = new_x_opt
         u_opt = new_u_opt
         MPC_clcyle = time.time() 
-        # Traj_splines.update(x_opt,u_opt)
-        # if (np.linalg.norm(x_opt[0,:3] - x_opt[-1,:3]) < 0.6 and land_triger == 1):
-        #     print("short traj!")
-        #     x_opt = None
-        #     land_init_ = 0
-        # else:
-        #     vis.visualize_traj(x_opt, mpc.dt, topic="/drone2/planning/traj")
         time.sleep(0.2)
         vis.visualize_traj(x_opt, mpc.dt, topic="/drone2/planning/traj")
 

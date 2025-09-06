@@ -14,6 +14,7 @@
 #include <cv_bridge/cv_bridge.h>
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <atomic>
 #include <thread>
 #include <cstdlib>
@@ -45,6 +46,7 @@ using namespace cv;
 // #define SIMULATE
 # define SAVE_VIDEO
 # define SCREEN_SHOW
+// # define DELAY_TEST
 
 namespace image{
 class MedianFilter1 {
@@ -59,6 +61,28 @@ private:
     std::deque<double> window;  // 存储窗口内的值
 };
 
+struct VINSState {
+    Eigen::Vector3d position;      // 位置
+    Eigen::Vector3d velocity;      // 速度
+    Eigen::Quaterniond orientation; // 四元数
+    
+    VINSState() : position(Eigen::Vector3d::Zero()), 
+                 velocity(Eigen::Vector3d::Zero()), 
+                 orientation(Eigen::Quaterniond::Identity()) {}
+                 
+    VINSState(const nav_msgs::Odometry::ConstPtr& msg) {
+        position << msg->pose.pose.position.x, 
+                   msg->pose.pose.position.y, 
+                   msg->pose.pose.position.z;
+        velocity << msg->twist.twist.linear.x, 
+                   msg->twist.twist.linear.y, 
+                   msg->twist.twist.linear.z;
+        orientation.w() = msg->pose.pose.orientation.w;
+        orientation.x() = msg->pose.pose.orientation.x;
+        orientation.y() = msg->pose.pose.orientation.y;
+        orientation.z() = msg->pose.pose.orientation.z;
+    }
+};
 
 class MultiKalmanFilter {
     public:
@@ -98,9 +122,15 @@ private:
 
     bool trigger_condition_met;
     int c_flag;
-    Eigen::Vector3d T1;
-    Eigen::Matrix3d R1;
-    std::vector<Eigen::Vector3d> list;
+    // 优化的数据结构：只存储必要的位置、速度和角度信息
+    std::vector<VINSState> vins_states;  // 存储VINS状态信息
+    
+    // T1和R1的计算相关变量
+    Eigen::Vector3d T1;  // 滤波后的位置
+    Eigen::Matrix3d R1;  // 滤波后的旋转矩阵
+    int vins_input_count;   // VINS输入计数器
+    static const int UPDATE_INTERVAL = 5;  // 每5次输入更新一次T1R1
+    static const int FIXED_DELAY = 44;     // 固定延迟帧数
 
     std::vector<Eigen::Vector4d> svo_list;
     Bezierpredict svopredict;
@@ -138,8 +168,11 @@ private:
     Eigen::Vector3d T8{0.0, 0.0, 0.0};
     Eigen::Vector3d position{0.0, 0.0, 0.0};
     Eigen::Matrix3d pose = Eigen::Matrix3d::Identity(); 
-    MedianFilter1 mf1;
+    // MedianFilter1 mf1;
     ros::Publisher target_pose_pub;
+#ifdef DELAY_TEST
+    ros::Publisher delayed_vins_pub;  // 发布延迟补偿后的VINS消息
+#endif
     void reda(ros::NodeHandle& nh);
 
     
