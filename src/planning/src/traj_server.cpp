@@ -108,9 +108,11 @@ int target_land_flag = 0;
 
 
 // 角速度控制相关参数
-double yaw_kp = 1.0;  // 偏航角速度控制增益
+double yaw_kp = 1.2;  // 偏航角速度控制增益
 double max_yaw_rate = 1.3;  // 最大偏航角速度限制 (rad/s)
 
+double dog_yaw_cw_compensate = 1.0; // 补偿系数可根据实际调整
+double dog_yaw_ccw_compensate = 1.0; // 补偿系数可根据实际调整
 
 double x_p = 0.4;
 double x_i = 1.1;
@@ -121,14 +123,14 @@ double integral_limit_x = 1;
 double dog_forward_coeff_x = 0.25; // 系数可根据实际调整，目前是三次函数拟合
 double dog_backward_coeff_x = 0.45; // 系数可根据实际调整，目前是三次函数拟合
 
-double y_p = 0.4;
-double y_i = 0.8;
+double y_p = 0.7;
+double y_i = 1.1;
 double y_d = 0.0;
 double y_d_max = 0.12;
-double v_forward_offset_y = 0.25;
+double v_forward_offset_y = 0.0;
 double integral_limit_y = 1;
-double dog_forward_coeff_y = 0.2; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_y = 0.4; // 系数可根据实际调整，目前是三次函数拟合
+double dog_forward_coeff_y = 0.28; // 系数可根据实际调整，目前是三次函数拟合
+double dog_backward_coeff_y = 0.28; // 系数可根据实际调整，目前是三次函数拟合
 
 double z_p = 0.3;
 double z_i = 0.1;
@@ -670,6 +672,15 @@ void cmdCallback(const ros::TimerEvent &e) {
     angle_diff += 2 * M_PI;
   }
 
+  // 角度限制逻辑，防止一次转角太大
+  if (std::fabs(angle_diff) > 1.5)
+  cmd.yaw = 0.4 * angle_diff + vins_yaw;
+  else
+  cmd.yaw = angle_diff + vins_yaw;
+
+  // P控制器计算角速度
+  cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
+
 
   if (!precise_mode) {
     target_vx = mpc_v.x();
@@ -690,8 +701,8 @@ void cmdCallback(const ros::TimerEvent &e) {
       target_vy = hc14_dog_vel.y();
       
       // position也加上前馈
-      double raw_offset_x = (raw_hc14_dog_vel.x() >= 0 ? dog_forward_coeff_x : dog_backward_coeff_x) * std::pow(raw_hc14_dog_vel.x(), 3);
-      double raw_offset_y = (raw_hc14_dog_vel.y() >= 0 ? dog_forward_coeff_y : dog_backward_coeff_y) * std::pow(raw_hc14_dog_vel.y(), 3);
+      double raw_offset_x = (raw_hc14_dog_vel.x() >= 0 ? dog_forward_coeff_x : dog_backward_coeff_x) * ((cmd.yaw_dot >= 0 ? dog_yaw_ccw_compensate : dog_yaw_cw_compensate) * cmd.yaw_dot + std::pow(raw_hc14_dog_vel.x(), 3));
+      double raw_offset_y = (raw_hc14_dog_vel.y() >= 0 ? dog_forward_coeff_y : dog_backward_coeff_y) * ((cmd.yaw_dot >= 0 ? dog_yaw_ccw_compensate : dog_yaw_cw_compensate) * cmd.yaw_dot + std::pow(raw_hc14_dog_vel.y(), 3));
 
       double cos_yaw = cos(target_yaw);
       double sin_yaw = sin(target_yaw);
@@ -789,9 +800,8 @@ void cmdCallback(const ros::TimerEvent &e) {
       // Landing模式下的velocity前馈控制
       if (hc14_offset_ready && raw_hc14_dog_pos_received) {
         // 基于dog_pos的velocity前馈                
-        
-        cmd.velocity.x = target_vx;
-        cmd.velocity.y = target_vy;
+        cmd.velocity.x = target_vx * 1.2;
+        cmd.velocity.y = target_vy * 1.2;
 
       } else {
         // 如果没有dog_pos信息，使用原来的控制
@@ -799,10 +809,11 @@ void cmdCallback(const ros::TimerEvent &e) {
         cmd.velocity.y = target_vy * target_lost_v_decay;
       }
 
-      // 根据发布时间间隔0.015s，假设当前速度匀速，预测下一个时刻的位置
-      cmd.position.x = vins_p.x() + cmd.velocity.x * 0.015;
-      cmd.position.y = vins_p.y() + cmd.velocity.y * 0.015;
-      cmd.velocity.z = -0.08;
+      cmd.position.x += cmd.velocity.x * 0.02;
+      cmd.position.y += cmd.velocity.y * 0.02;
+      cmd.velocity.z = -0.03;
+      cmd.velocity.x += x_i * intergral_targetx;
+      cmd.velocity.y += y_i * intergral_targety;
     }
     
     // 丢失目标之后如果target_p变了怎么办？
@@ -829,14 +840,6 @@ void cmdCallback(const ros::TimerEvent &e) {
   intergral_targety = std::max(std::min(intergral_targety + 0.01 * error_targety, integral_limit_y), -integral_limit_y);
   intergral_targetz = std::max(std::min(intergral_targetz + 0.01 * error_targetz, integral_limit_z), -integral_limit_z);
 
-   // 角度限制逻辑，防止一次转角太大
-  if (std::fabs(angle_diff) > 1.5)
-    cmd.yaw = 0.4 * angle_diff + vins_yaw;
-  else
-    cmd.yaw = angle_diff + vins_yaw;
-
-  // P控制器计算角速度
-  cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
 
   // 先加offset
   cmd.velocity.x += v_forward_offset_x * cos(vins_yaw) - v_forward_offset_y * sin(vins_yaw);
@@ -1030,14 +1033,14 @@ void auto_landing_detect(const ros::TimerEvent &event) {
 
   if (!land_triger_received_ && target_receive && 
     hc14_offset_ready && raw_hc14_dog_pos_received &&
-    std::fabs(target_v.x() - vins_v.x()) < 0.2 && 
-    std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
-    std::fabs(target_v.z() - vins_v.z()) < 0.2 &&
-    std::fabs(target_p.x() - vins_p.x()) < 0.3 &&
-    std::fabs(target_p.y() - vins_p.y()) < 0.3 &&
+    std::fabs(target_v.x() - vins_v.x()) < 0.5 && 
+    std::fabs(target_v.y() - vins_v.y()) < 0.5 && 
+    std::fabs(target_v.z() - vins_v.z()) < 0.5 &&
+    std::fabs(target_p.x() - vins_p.x()) < 0.1 &&
+    std::fabs(target_p.y() - vins_p.y()) < 0.1 &&
     std::fabs(target_dog_yaw - vins_yaw) < 5.0/180.0 * M_PI)
   {
-    if (land_count > 15)
+    if (land_count > 10)
     {
       std::cout << "Auto landing triggered!" << std::endl;
       // land_triger_received_ = true;
