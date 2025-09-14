@@ -759,7 +759,6 @@ void read::reda(ros::NodeHandle& nh) {
     cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_7X7_250);
     cv::Ptr<cv::aruco::DetectorParameters> parameters = cv::aruco::DetectorParameters::create();
 
-    Eigen::Vector3d T3_1;
     Eigen::Vector3d pre_vel{0.0,0.0,0.0};
     double fx = 734.804843, fy = 734.561878;
     double cx = 590.087740, cy = 422.783965;
@@ -948,7 +947,6 @@ void read::reda(ros::NodeHandle& nh) {
                 //   Eigen::Vector3d T3(T2[2], -T2[0], -T2[1]);
                 Eigen::Vector3d T3 = M_camera2drone * T2;
                 //   T3[2] += 0.05;
-                T3_1 = T3;
                 //位置计算
                 R2 = M_camera2drone * M_tag2camera * R2;
                 position = R1 * T3 + T1;
@@ -971,29 +969,33 @@ void read::reda(ros::NodeHandle& nh) {
                     averageDeg += (deg * 0.65);
 
                 if (currentMarkerId == 29){
+                    position.x() = position.x() + 0.03*std::sin(fin_deg);
+                    position.y() = position.y() - 0.03*std::cos(fin_deg);
                     averagePosition += (position * 0.8);
                 }
                 else if (currentMarkerId == 33){
+                    position.x() = position.x() + 0.03*std::sin(fin_deg);
+                    position.y() = position.y() - 0.03*std::cos(fin_deg);
                     averagePosition += (position * 0.5);
                 }
                 else if (currentMarkerId == 0){
-                    position.x() = position.x() - 0.18*std::cos(fin_deg) + 0.10*std::sin(fin_deg);
-                    position.y() = position.y() - 0.18*std::sin(fin_deg) - 0.10*std::cos(fin_deg);
+                    position.x() = position.x() - 0.18*std::cos(fin_deg) + 0.16*std::sin(fin_deg);
+                    position.y() = position.y() - 0.18*std::sin(fin_deg) - 0.16*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 1){
-                    position.x() = position.x() + 0.22*std::cos(fin_deg) + 0.10*std::sin(fin_deg);
-                    position.y() = position.y() + 0.22*std::sin(fin_deg) - 0.10*std::cos(fin_deg);
+                    position.x() = position.x() + 0.22*std::cos(fin_deg) + 0.16*std::sin(fin_deg);
+                    position.y() = position.y() + 0.22*std::sin(fin_deg) - 0.16*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 2){
-                    position.x() = position.x() + 0.22*std::cos(fin_deg) - 0.18*std::sin(fin_deg);
-                    position.y() = position.y() + 0.22*std::sin(fin_deg) + 0.18*std::cos(fin_deg);
+                    position.x() = position.x() + 0.22*std::cos(fin_deg) - 0.12*std::sin(fin_deg);
+                    position.y() = position.y() + 0.22*std::sin(fin_deg) + 0.12*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 3){
-                    position.x() = position.x() - 0.18*std::cos(fin_deg) - 0.18*std::sin(fin_deg);
-                    position.y() = position.y() - 0.18*std::sin(fin_deg) + 0.18*std::cos(fin_deg);
+                    position.x() = position.x() - 0.18*std::cos(fin_deg) - 0.12*std::sin(fin_deg);
+                    position.y() = position.y() - 0.18*std::sin(fin_deg) + 0.12*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
 
@@ -1021,6 +1023,11 @@ void read::reda(ros::NodeHandle& nh) {
                 }
                 fin_deg += 0.5 * delta_yaw; // 0.3为滤波系数，可根据实际调整
             }
+
+            if(fin_deg > 180)
+                fin_deg -= 360;
+            else if(fin_deg < -180)
+                fin_deg += 360;
 
             position = averagePosition / weight_count;
             if((ros::Time::now() - target_start_time).toSec() > 1.0)
@@ -1130,9 +1137,9 @@ void read::reda(ros::NodeHandle& nh) {
 
         // 显示速度 averge_v
         cv::putText(frame, std::string("c_pos: ") + 
-                    "x=" + std::to_string(T3_1[0]) + 
-                    " y=" + std::to_string(T3_1[1]) + 
-                    " z=" + std::to_string(T3_1[2]),
+                    "x=" + std::to_string(avg[0]-vins_p[0]) + 
+                    " y=" + std::to_string(avg[1]-vins_p[1]) + 
+                    " z=" + std::to_string(avg[2]-vins_p[2]),
                     cv::Point(10, 150), cv::FONT_HERSHEY_SIMPLEX, 0.5,
                     cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 
