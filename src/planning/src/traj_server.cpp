@@ -76,6 +76,8 @@ double yaw_offset = 0.0;  // target_yaw和raw_hc14_dog_yaw之间的差值（经�
 double kp = 1.2;
 double tracking_dist_ = 1.5;
 double target_receive_triger = 0;
+double land_triger = 0;
+ros::Time land_triger_time;
 ros::Time target_lost_time;
 Eigen::Vector3d target_lost_p = {0,0,0};
 Eigen::Vector3d target_lost_v = {0,0,0};
@@ -120,24 +122,24 @@ double dog_yaw_cw_compensate = 0.0; // 补偿系数可根据实际调整
 double dog_yaw_ccw_compensate = 0.0; // 补偿系数可根据实际调整
 
 double x_p = 0.4;
-double x_i = 1.1;
+double x_i = 0.7;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = -0.6;
 double integral_limit_x = 1;
 double dog_forward_coeff_x = 0.48; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_x = 0.6; // 系数可根据实际调整，目前是三次函数拟合
+double dog_backward_coeff_x = 0.67; // 系数可根据实际调整，目前是三次函数拟合
 
 double y_p = 0.4;
-double y_i = 1.0;
+double y_i = 0.6;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = -0.25;
 double integral_limit_y = 1;
 double dog_forward_coeff_y = 0.52; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_y = 0.7; // 系数可根据实际调整，目前是三次函数拟合
+double dog_backward_coeff_y = 0.64; // 系数可根据实际调整，目前是三次函数拟合
 
-double z_p = 0.35;
+double z_p = 0.3;
 double z_i = 0.1;
 double z_d = 0.0;
 double z_d_max = 0.12;
@@ -648,6 +650,13 @@ void cmdCallback(const ros::TimerEvent &e) {
   double error_targetx, error_targety, error_targetz;
   double target_yaw;
 
+
+  if (land_triger_received_ && land_triger == 0)
+  {
+    land_triger_time = ros::Time::now();
+    land_triger = 1;
+  }
+
   Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
 
   // 计算角度差,hc14_dog_yaw有点晃
@@ -723,6 +732,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     }
     else
     {
+      // targetz = vins_p.z() - 0.3 * (ros::Time::now() - land_triger_time).toSec();
       targetz = vins_p.z() - 0.4;
       target_vz = target_v.z() - 0.08;
     }
@@ -828,8 +838,8 @@ void cmdCallback(const ros::TimerEvent &e) {
         cmd.velocity.y = target_lost_v.y() * target_lost_v_decay;
       }
 
-      target_lost_p.x() += cmd.velocity.x * 0.01;
-      target_lost_p.y() += cmd.velocity.y * 0.01;
+      target_lost_p.x() += cmd.velocity.x * 0.009;
+      target_lost_p.y() += cmd.velocity.y * 0.009;
 
       cmd.position.x = target_lost_p.x();
       cmd.position.y = target_lost_p.y();
@@ -852,6 +862,7 @@ void cmdCallback(const ros::TimerEvent &e) {
       land_triger_received_ = false;
       triger_received_ = false;
       land_lock_timer = 0;
+      land_triger = 0;
     }
   }
 
