@@ -834,7 +834,7 @@ void read::reda(ros::NodeHandle& nh) {
         }
         // 转换为灰度图像，非必要
         cv::Mat gray;
-        frame.convertTo(frame, -1, 1.1, 20); // 轻微提高对比度和亮度
+        // frame.convertTo(frame, -1, 1.1, 20); // 轻微提高对比度和亮度
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
         std::vector<int> markerIds;

@@ -118,11 +118,8 @@ int target_land_flag = 0;
 double yaw_kp = 1.2;  // 偏航角速度控制增益
 double max_yaw_rate = 1.3;  // 最大偏航角速度限制 (rad/s)
 
-double dog_yaw_cw_compensate = 0.0; // 补偿系数可根据实际调整
-double dog_yaw_ccw_compensate = 0.0; // 补偿系数可根据实际调整
-
 double x_p = 0.4;
-double x_i = 0.7;
+double x_i = 0.5;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = -0.6;
@@ -130,8 +127,8 @@ double integral_limit_x = 1;
 double dog_forward_coeff_x = 0.48; // 系数可根据实际调整，目前是三次函数拟合
 double dog_backward_coeff_x = 0.67; // 系数可根据实际调整，目前是三次函数拟合
 
-double y_p = 0.4;
-double y_i = 0.6;
+double y_p = 0.35;
+double y_i = 0.45;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = -0.25;
@@ -145,6 +142,19 @@ double z_d = 0.0;
 double z_d_max = 0.12;
 double v_forward_offset_z = 0.0;
 double integral_limit_z = 1.0;
+
+// 位置控制PID参数
+double pos_x_p = 0.1;
+double pos_x_i = 0.0;
+double pos_x_d = 0.0;
+double pos_x_d_max = 0.1;
+double pos_integral_limit_x = 0.5;
+
+double pos_y_p = 0.25;
+double pos_y_i = 0.0;
+double pos_y_d = 0.0;
+double pos_y_d_max = 0.1;
+double pos_integral_limit_y = 0.5;
 
 #ifdef SIMULATE
 v_offset_x = 0.0;
@@ -649,43 +659,30 @@ void cmdCallback(const ros::TimerEvent &e) {
   double target_vx, target_vy, target_vz;
   double error_targetx, error_targety, error_targetz;
   double target_yaw;
+  double angle_diff = 0;
 
 
-  if (land_triger_received_ && land_triger == 0)
-  {
-    land_triger_time = ros::Time::now();
-    land_triger = 1;
-  }
-
-  Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-
-  // 计算角度差,hc14_dog_yaw有点晃
-  if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-    target_yaw = hc14_dog_yaw;
-  } else {
-    target_yaw = target_dog_yaw;
-  }
-  // target_yaw = target_dog_yaw;
-
-  // double angle_diff = atan2(sin(target_yaw - vins_yaw), cos(target_yaw - vins_yaw));
-  double angle_diff = target_yaw - vins_yaw;
-  if (angle_diff > M_PI) {
-    angle_diff -= 2 * M_PI;
-  } else if (angle_diff < -M_PI) {
-    angle_diff += 2 * M_PI;
-  }
-
-  // 角度限制逻辑，防止一次转角太大
-  if (std::fabs(angle_diff) > 1.5)
-  cmd.yaw = 0.4 * angle_diff + vins_yaw;
-  else
-  cmd.yaw = angle_diff + vins_yaw;
-
-  // P控制器计算角速度
-  cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
-
+  // if (land_triger_received_ && land_triger == 0)
+  // {
+  //   land_triger_time = ros::Time::now();
+  //   land_triger = 1;
+  // }
 
   if (!precise_mode) {
+    // 目前mpc没有控制yaw，还使用目标的yaw
+    if (hc14_offset_ready && raw_hc14_dog_pos_received) {
+      target_yaw = hc14_dog_yaw;
+    } else {
+      target_yaw = target_dog_yaw;
+    }
+
+    angle_diff = target_yaw - vins_yaw;
+    if (angle_diff > M_PI) {
+      angle_diff -= 2 * M_PI;
+    } else if (angle_diff < -M_PI) {
+      angle_diff += 2 * M_PI;
+    }
+
     target_vx = mpc_v.x();
     target_vy = mpc_v.y();
     target_vz = mpc_v.z();
@@ -699,6 +696,21 @@ void cmdCallback(const ros::TimerEvent &e) {
     error_targetz = targetz - vins_p.z();
 
   } else {
+    // 计算角度差,hc14_dog_yaw有点晃
+    if (hc14_offset_ready && raw_hc14_dog_pos_received) {
+      target_yaw = hc14_dog_yaw;
+    } else {
+      target_yaw = target_dog_yaw;
+    }
+    // target_yaw = target_dog_yaw;
+
+    angle_diff = target_yaw - vins_yaw;
+    if (angle_diff > M_PI) {
+      angle_diff -= 2 * M_PI;
+    } else if (angle_diff < -M_PI) {
+      angle_diff += 2 * M_PI;
+    }
+
     if (hc14_offset_ready && raw_hc14_dog_pos_received) {
       double cos_yaw = cos(target_yaw);
       double sin_yaw = sin(target_yaw);
@@ -711,7 +723,7 @@ void cmdCallback(const ros::TimerEvent &e) {
       
       // position也加上前馈
       double raw_offset_x = (raw_hc14_dog_vel_x >= 0 ? dog_forward_coeff_x : dog_backward_coeff_x) * std::pow(raw_hc14_dog_vel_x, 3);
-      double raw_offset_y = (raw_hc14_dog_vel_y >= 0 ? dog_forward_coeff_y : dog_backward_coeff_y) * ((cmd.yaw_dot >= 0 ? dog_yaw_ccw_compensate : dog_yaw_cw_compensate) * cmd.yaw_dot + std::pow(raw_hc14_dog_vel_y, 3));
+      double raw_offset_y = (raw_hc14_dog_vel_y >= 0 ? dog_forward_coeff_y : dog_backward_coeff_y) * std::pow(raw_hc14_dog_vel_y, 3);
 
       targetx = target_p.x() + std::max(-1.0, std::min(1.0, raw_offset_x * cos_yaw - raw_offset_y * sin_yaw));
       targety = target_p.y() + std::max(-1.0, std::min(1.0, raw_offset_x * sin_yaw + raw_offset_y * cos_yaw));
@@ -749,10 +761,6 @@ void cmdCallback(const ros::TimerEvent &e) {
     last_error_targetz = error_targetz;
   }
 
-  cmd.position.x = targetx;
-  cmd.position.y = targety;
-  cmd.position.z = targetz;
-
   // BPNN_count ++;
   // if (BPNN_count > 4) {
   // auto params_x = pid_x.compute(error_targetx, error_targetx - last_error_targetx, mpc_v.x());
@@ -787,6 +795,8 @@ void cmdCallback(const ros::TimerEvent &e) {
   double last_error_y_body = last_error_targetx * sin_yaw + last_error_targety * cos_yaw;
   double target_vx_body = target_vx * cos_yaw - target_vy * sin_yaw;
   double target_vy_body = target_vx * sin_yaw + target_vy * cos_yaw;
+  double target_x_body = targetx * cos_yaw - targety * sin_yaw;
+  double target_y_body = targetx * sin_yaw + targety * cos_yaw;
   double intergral_targetx_body = intergral_targetx * cos_yaw - intergral_targety * sin_yaw;
   double intergral_targety_body = intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
 
@@ -795,10 +805,33 @@ void cmdCallback(const ros::TimerEvent &e) {
   double vy_body = target_vy_body + y_p * error_y_body + y_i * intergral_targety_body + std::max(std::min(y_d * (error_y_body - last_error_y_body), y_d_max), -y_d_max);
   double vz = target_vz + z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz), z_d_max), -z_d_max);
 
+  double x_body = target_x_body + pos_x_p * error_x_body + pos_x_i * intergral_targetx_body + std::max(std::min(pos_x_d * (error_x_body - last_error_x_body), pos_x_d_max), -pos_x_d_max);;
+  double y_body = target_y_body + pos_y_p * error_y_body + pos_y_i * intergral_targety_body + std::max(std::min(pos_y_d * (error_y_body - last_error_y_body), pos_y_d_max), -pos_y_d_max);;
+
   // 再转回世界系
   cmd.velocity.x = vx_body * cos_yaw + vy_body * sin_yaw;
   cmd.velocity.y = - vx_body * sin_yaw + vy_body * cos_yaw;
   cmd.velocity.z = vz;
+  
+  cmd.position.x = x_body * cos_yaw + y_body * sin_yaw;
+  cmd.position.y = - x_body * sin_yaw + y_body * cos_yaw;
+  cmd.position.z = targetz;
+
+  if (!precise_mode) {
+    // 角度限制逻辑，防止一次转角太大
+    if (std::fabs(angle_diff) > 1.5)
+      cmd.yaw = 0.4 * angle_diff + vins_yaw;
+    else
+      cmd.yaw = angle_diff + vins_yaw;
+
+    // P控制器计算角速度
+    cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
+  }
+
+  // cmd.position.x = targetx;
+  // cmd.position.y = targety;
+  // cmd.position.z = targetz;
+
   
   // cmd.velocity.x = target_vx + x_p * error_targetx + x_i * intergral_targetx + std::max(std::min(1.8 * (error_targetx - last_error_targetx),0.12),-0.12);
   // cmd.velocity.y = target_vy + y_p * error_targety + y_i * intergral_targety + std::max(std::min(2.5 * (error_targety - last_error_targety),0.12),-0.12);
@@ -1026,8 +1059,14 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
 
     // 处理precise_mode切换逻辑
     if (triger_received_) {
+        double angle_diff = target_dog_yaw - vins_yaw;
+        if (angle_diff > M_PI) {
+          angle_diff -= 2 * M_PI;
+        } else if (angle_diff < -M_PI) {
+          angle_diff += 2 * M_PI;
+        }
         Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-        if (!precise_mode && ((vins_p - target_top).norm() < 1.0 || land_triger_received_))
+        if (!precise_mode && ((angle_diff < 10.0/180.0 * M_PI && (vins_p - target_top).norm() < 1.0) || land_triger_received_))
         {
             precise_mode = true;
             std::cout << "precise_mode: true" << std::endl;
