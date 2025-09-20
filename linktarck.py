@@ -96,7 +96,9 @@ def parse_nlink_aoa_nodeframe0(data):
             parsed_data["anchors"].append({
                 "anchor_id": anchor_id,
                 "distance_m": distance_m,
-                "angle_rad": angle_rad
+                "angle_rad": angle_rad,
+                "fp_rssi": fp_rssi,
+                "rx_rssi": rx_rssi
             })
 
             offset += ANCHOR_DATA_SIZE  # 移动到下一个基站

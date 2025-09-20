@@ -28,7 +28,7 @@ vins_p =np.array([0.0,0.0,0.0])
 vins_v =np.array([0.0,0.0,0.0])
 vins_yaw = 0
 
-land_height_limit = [1.5, 2.0]
+land_height_limit = [1.2, 1.5]
 land_target_z = 0.0
 
 class TargetFilter:

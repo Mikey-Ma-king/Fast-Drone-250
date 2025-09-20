@@ -248,10 +248,10 @@ void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
         hc14_dog_vel_initialized = true;
     } else {
         // 狗头
-        raw_hc14_dog_vel.x() = 0.6 * raw_hc14_dog_vel.x() + 0.4 * current_raw_hc14_dog_vel.x();
+        raw_hc14_dog_vel.x() = 0.7 * raw_hc14_dog_vel.x() + 0.3 * current_raw_hc14_dog_vel.x();
         // 狗侧
         // raw_hc14_dog_vel.y() = 0.85 * raw_hc14_dog_vel.y() + 0.15 * current_raw_hc14_dog_vel.y();
-        raw_hc14_dog_vel.y() = 0.6 * raw_hc14_dog_vel.y() + 0.4 * current_raw_hc14_dog_vel.y();
+        raw_hc14_dog_vel.y() = 0.7 * raw_hc14_dog_vel.y() + 0.3 * current_raw_hc14_dog_vel.y();
         // 狗上
         raw_hc14_dog_vel.z() = current_raw_hc14_dog_vel.z();
         // yaw滤波?

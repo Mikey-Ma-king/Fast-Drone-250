@@ -75,7 +75,7 @@ double yaw_offset = 0.0;  // target_yaw和raw_hc14_dog_yaw之间的差值（经�
 
 double kp = 1.2;
 double tracking_dist_ = 1.5;
-double target_receive_triger = 0;
+double target_receive_triger = 1;
 double land_triger = 0;
 ros::Time land_triger_time;
 ros::Time target_lost_time;
@@ -118,23 +118,23 @@ int target_land_flag = 0;
 double yaw_kp = 1.2;  // 偏航角速度控制增益
 double max_yaw_rate = 1.3;  // 最大偏航角速度限制 (rad/s)
 
-double x_p = 0.4;
-double x_i = 0.5;
+double x_p = 0.2;
+double x_i = 0.8;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = -0.6;
 double integral_limit_x = 1;
-double dog_forward_coeff_x = 0.48; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_x = 0.67; // 系数可根据实际调整，目前是三次函数拟合
+double dog_forward_coeff_x = 0.48; // 为了调整vins可能出现的晃动误差
+double dog_backward_coeff_x = 0.67; // 为了调整vins可能出现的晃动误差
 
-double y_p = 0.35;
-double y_i = 0.45;
+double y_p = 0.2;
+double y_i = 0.8;
 double y_d = 0.0;
 double y_d_max = 0.12;
-double v_offset_y = -0.25;
+double v_offset_y = 0.0;
 double integral_limit_y = 1;
-double dog_forward_coeff_y = 0.52; // 系数可根据实际调整，目前是三次函数拟合
-double dog_backward_coeff_y = 0.64; // 系数可根据实际调整，目前是三次函数拟合
+double dog_forward_coeff_y = 0.0; // 为了调整vins可能出现的晃动误差
+double dog_backward_coeff_y = 0.0; // 为了调整vins可能出现的晃动误差
 
 double z_p = 0.3;
 double z_i = 0.1;
@@ -143,14 +143,14 @@ double z_d_max = 0.12;
 double v_forward_offset_z = 0.0;
 double integral_limit_z = 1.0;
 
-// 位置控制PID参数
-double pos_x_p = 0.1;
+// 位置控制PID参数，感觉没用
+double pos_x_p = 0.0;
 double pos_x_i = 0.0;
 double pos_x_d = 0.0;
 double pos_x_d_max = 0.1;
 double pos_integral_limit_x = 0.5;
 
-double pos_y_p = 0.25;
+double pos_y_p = 0.0;
 double pos_y_i = 0.0;
 double pos_y_d = 0.0;
 double pos_y_d_max = 0.1;
@@ -162,7 +162,7 @@ v_offset_y = 0.0;
 v_forward_offset_z = 0.0;
 #endif
 
-std::vector<double> land_height_limit = {1.5, 2.0};
+std::vector<double> land_height_limit = {1.2, 1.5};
 
 std::vector<Eigen::Vector3d> target_p_list,target_v_list;
 
@@ -882,12 +882,12 @@ void cmdCallback(const ros::TimerEvent &e) {
     }
     
     // 丢失目标之后如果target_p变了怎么办？
-    if (flow_z < 0.13 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.2)
+    if (flow_z < 0.14 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.2)
         land_lock_timer += 1;
     else
         land_lock_timer = std::max(land_lock_timer - 0.5, 0.0);
 
-    if (land_lock_timer > 5)
+    if (land_lock_timer > 3)
     {
       quadrotor_msgs::TakeoffLand land;
       land.takeoff_land_cmd = 2;
@@ -896,6 +896,7 @@ void cmdCallback(const ros::TimerEvent &e) {
       triger_received_ = false;
       land_lock_timer = 0;
       land_triger = 0;
+      precise_mode = false;
     }
   }
 

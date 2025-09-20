@@ -930,7 +930,7 @@ void read::reda(ros::NodeHandle& nh) {
                     rvec = rvecs0[i];
                     tvec = tvecs0[i];
                 }
-                else if(currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3){
+                else if(currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3 || currentMarkerId == 4 || currentMarkerId == 5){
                     rvec = rvecs2[i];
                     tvec = tvecs2[i];
                 }
@@ -965,37 +965,47 @@ void read::reda(ros::NodeHandle& nh) {
                     averageDeg += (deg * 0.8);
                 else if (currentMarkerId == 33)
                     averageDeg += (deg * 0.5);
-                else if (currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3)
+                else if (currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3 || currentMarkerId == 4 || currentMarkerId == 5)
                     averageDeg += (deg * 0.65);
 
                 if (currentMarkerId == 29){
-                    position.x() = position.x() + 0.03*std::sin(fin_deg);
-                    position.y() = position.y() - 0.03*std::cos(fin_deg);
+                    position.x() = position.x() + 0.0*std::sin(fin_deg);
+                    position.y() = position.y() - 0.0*std::cos(fin_deg);
                     averagePosition += (position * 0.8);
                 }
                 else if (currentMarkerId == 33){
-                    position.x() = position.x() + 0.03*std::sin(fin_deg);
-                    position.y() = position.y() - 0.03*std::cos(fin_deg);
+                    position.x() = position.x() + 0.0*std::sin(fin_deg);
+                    position.y() = position.y() - 0.0*std::cos(fin_deg);
                     averagePosition += (position * 0.5);
                 }
                 else if (currentMarkerId == 0){
-                    position.x() = position.x() - 0.18*std::cos(fin_deg) + 0.16*std::sin(fin_deg);
-                    position.y() = position.y() - 0.18*std::sin(fin_deg) - 0.16*std::cos(fin_deg);
+                    position.x() = position.x() - 0.205*std::cos(fin_deg) + 0.14*std::sin(fin_deg);
+                    position.y() = position.y() - 0.205*std::sin(fin_deg) - 0.14*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 1){
-                    position.x() = position.x() + 0.22*std::cos(fin_deg) + 0.16*std::sin(fin_deg);
-                    position.y() = position.y() + 0.22*std::sin(fin_deg) - 0.16*std::cos(fin_deg);
+                    position.x() = position.x() + 0.205*std::cos(fin_deg) + 0.14*std::sin(fin_deg);
+                    position.y() = position.y() + 0.205*std::sin(fin_deg) - 0.14*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 2){
-                    position.x() = position.x() + 0.22*std::cos(fin_deg) - 0.12*std::sin(fin_deg);
-                    position.y() = position.y() + 0.22*std::sin(fin_deg) + 0.12*std::cos(fin_deg);
+                    position.x() = position.x() + 0.205*std::cos(fin_deg) - 0.14*std::sin(fin_deg);
+                    position.y() = position.y() + 0.205*std::sin(fin_deg) + 0.14*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 3){
-                    position.x() = position.x() - 0.18*std::cos(fin_deg) - 0.12*std::sin(fin_deg);
-                    position.y() = position.y() - 0.18*std::sin(fin_deg) + 0.12*std::cos(fin_deg);
+                    position.x() = position.x() - 0.205*std::cos(fin_deg) - 0.14*std::sin(fin_deg);
+                    position.y() = position.y() - 0.205*std::sin(fin_deg) + 0.14*std::cos(fin_deg);
+                    averagePosition += (position * 0.65);
+                }
+                else if (currentMarkerId == 4){
+                    position.x() = position.x() + 0.14*std::sin(fin_deg);
+                    position.y() = position.y() - 0.14*std::cos(fin_deg);
+                    averagePosition += (position * 0.65);
+                }
+                else if (currentMarkerId == 5){
+                    position.x() = position.x() + 0.14*std::sin(fin_deg);
+                    position.y() = position.y() - 0.14*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
 
@@ -1003,7 +1013,7 @@ void read::reda(ros::NodeHandle& nh) {
                     weight_count += 0.8;
                 else if(currentMarkerId == 33)
                     weight_count += 0.5;
-                else if(currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3)
+                else if(currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3 || currentMarkerId == 4 || currentMarkerId == 5)
                     weight_count += 0.65;
 
             }
@@ -1087,6 +1097,12 @@ void read::reda(ros::NodeHandle& nh) {
                     // double filtered_x = position.x();
                     // double filtered_y = position.y();
                     // double filtered_z = position.z();
+
+                    // 基于VINS的机体朝向，将最终位置向机体左侧偏移2cm
+                    // 从VINS旋转矩阵R1获取yaw（机体朝向，世界系）
+                    double yaw_vins = std::atan2(R1(1,0), R1(0,0));
+                    filtered_x -= 0.02 * std::sin(yaw_vins);
+                    filtered_y += 0.02 * std::cos(yaw_vins);
 
                     odom_msg.pose.pose.position.x = round_to_decimal_places(filtered_x, 2);
                     odom_msg.pose.pose.position.y = round_to_decimal_places(filtered_y, 2);
