@@ -10,7 +10,8 @@ sleep 2
 ./tracker.sh &
 
 ./read.sh&
-./MPC.sh &
+# ./MPC.sh &
+python3 dog_pos_processor.py &
 roslaunch mavros px4.launch &
 wait
 # roslaunch vins fast_drone_250.launch &

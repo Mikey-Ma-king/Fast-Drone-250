@@ -1034,10 +1034,10 @@ void read::reda(ros::NodeHandle& nh) {
                 fin_deg += 0.5 * delta_yaw; // 0.3为滤波系数，可根据实际调整
             }
 
-            if(fin_deg > 180)
-                fin_deg -= 360;
-            else if(fin_deg < -180)
-                fin_deg += 360;
+            if(fin_deg > M_PI)
+                fin_deg -= 2 * M_PI;
+            else if(fin_deg < -M_PI)
+                fin_deg += 2 * M_PI;
 
             position = averagePosition / weight_count;
             if((ros::Time::now() - target_start_time).toSec() > 1.0)

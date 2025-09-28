@@ -32,6 +32,7 @@ ros::Publisher land_mark_pub_;
 ros::Publisher test_mark_pub_;
 ros::Publisher land_triger_pub;
 ros::Publisher debug_pub_;  // 添加调试信息发布器
+ros::Publisher yaw_offset_pub;  // 发布yaw offset差值
 ros::Time heartbeat_time_;
 bool receive_traj_ = false;
 bool flight_start_ = false;
@@ -57,21 +58,15 @@ unsigned int last_precise_target_count = 0;
 bool target_receive = false;
 
 // dog_pos 相关变量（只保留速度信息）
-Eigen::Vector3d raw_hc14_dog_vel{0,0,0};
-double raw_hc14_dog_yaw = 0.0;  // 狗的通信获得的偏航角
-bool raw_hc14_dog_pos_received = false;
-unsigned int raw_hc14_dog_pos_count = 0;
-unsigned int last_raw_hc14_dog_pos_count = 0;
+bool hc14_dog_pos_received = false;
+unsigned int hc14_dog_pos_count = 0;
+unsigned int last_hc14_dog_pos_count = 0;
 int last_hc14_dog_pos_timer = 0;  // dog_pos专用的timer
-int yaw_offset_exceed_timer = 0;
 
 // 处理后的hc14_dog信息
 Eigen::Vector3d hc14_dog_vel{0,0,0};
 double hc14_dog_yaw = 0.0;
 bool hc14_offset_ready = false;  // hc14_dog信息是否可用
-
-// Yaw差值补偿相关变量
-double yaw_offset = 0.0;  // target_yaw和raw_hc14_dog_yaw之间的差值（经过滤波）
 
 double kp = 1.2;
 double tracking_dist_ = 1.5;
@@ -118,29 +113,28 @@ int target_land_flag = 0;
 double yaw_kp = 1.2;  // 偏航角速度控制增益
 double max_yaw_rate = 1.3;  // 最大偏航角速度限制 (rad/s)
 
+double camera_offset = 0.4;
+
 double x_p = 0.2;
-double x_i = 0.8;
+double x_i = 0.85;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = -0.6;
+double offset_x = 0.0;
 double integral_limit_x = 1;
-double dog_forward_coeff_x = 0.48; // 为了调整vins可能出现的晃动误差
-double dog_backward_coeff_x = 0.67; // 为了调整vins可能出现的晃动误差
 
 double y_p = 0.2;
-double y_i = 0.8;
+double y_i = 0.85;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
+double offset_y = 0.0;
 double integral_limit_y = 1;
-double dog_forward_coeff_y = 0.0; // 为了调整vins可能出现的晃动误差
-double dog_backward_coeff_y = 0.0; // 为了调整vins可能出现的晃动误差
 
 double z_p = 0.3;
 double z_i = 0.1;
 double z_d = 0.0;
 double z_d_max = 0.12;
-double v_forward_offset_z = 0.0;
 double integral_limit_z = 1.0;
 
 // 位置控制PID参数，感觉没用
@@ -640,7 +634,7 @@ std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen
 
 
 void cmdCallback(const ros::TimerEvent &e) {
-  if (!target_receive && !land_triger_received_)
+  if (!hc14_dog_pos_received && !target_receive && !land_triger_received_)
     return;
   if (!triger_received_)
     return;
@@ -668,21 +662,21 @@ void cmdCallback(const ros::TimerEvent &e) {
   //   land_triger = 1;
   // }
 
+  // 目前mpc没有控制yaw，还使用目标的yaw
+  if (hc14_offset_ready && hc14_dog_pos_received) {
+    target_yaw = hc14_dog_yaw;
+  } else {
+    target_yaw = target_dog_yaw;
+  }
+
+  angle_diff = target_yaw - vins_yaw;
+  if (angle_diff > M_PI) {
+    angle_diff -= 2 * M_PI;
+  } else if (angle_diff < -M_PI) {
+    angle_diff += 2 * M_PI;
+  }
+
   if (!precise_mode) {
-    // 目前mpc没有控制yaw，还使用目标的yaw
-    if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-      target_yaw = hc14_dog_yaw;
-    } else {
-      target_yaw = target_dog_yaw;
-    }
-
-    angle_diff = target_yaw - vins_yaw;
-    if (angle_diff > M_PI) {
-      angle_diff -= 2 * M_PI;
-    } else if (angle_diff < -M_PI) {
-      angle_diff += 2 * M_PI;
-    }
-
     target_vx = mpc_v.x();
     target_vy = mpc_v.y();
     target_vz = mpc_v.z();
@@ -696,39 +690,13 @@ void cmdCallback(const ros::TimerEvent &e) {
     error_targetz = targetz - vins_p.z();
 
   } else {
-    // 计算角度差,hc14_dog_yaw有点晃
-    if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-      target_yaw = hc14_dog_yaw;
-    } else {
-      target_yaw = target_dog_yaw;
-    }
-    // target_yaw = target_dog_yaw;
+    if (hc14_offset_ready && hc14_dog_pos_received) {
+      target_vx = std::fabs(hc14_dog_vel.x()) >= 0.15 ? hc14_dog_vel.x() : 0.0;
+      target_vy = std::fabs(hc14_dog_vel.y()) >= 0.15 ? hc14_dog_vel.y() : 0.0;
 
-    angle_diff = target_yaw - vins_yaw;
-    if (angle_diff > M_PI) {
-      angle_diff -= 2 * M_PI;
-    } else if (angle_diff < -M_PI) {
-      angle_diff += 2 * M_PI;
-    }
+      targetx = target_p.x() + std::max(-1.0, std::min(1.0, camera_offset * target_vx));
+      targety = target_p.y() + std::max(-1.0, std::min(1.0, camera_offset * target_vy));
 
-    if (hc14_offset_ready && raw_hc14_dog_pos_received) {
-      double cos_yaw = cos(target_yaw);
-      double sin_yaw = sin(target_yaw);
-      
-      double raw_hc14_dog_vel_x = std::fabs(raw_hc14_dog_vel.x()) >= 0.15 ? raw_hc14_dog_vel.x() : 0.0;
-      double raw_hc14_dog_vel_y = std::fabs(raw_hc14_dog_vel.y()) >= 0.15 ? raw_hc14_dog_vel.y() : 0.0;
-
-      target_vx = raw_hc14_dog_vel_x * cos_yaw - raw_hc14_dog_vel_y * sin_yaw;
-      target_vy = raw_hc14_dog_vel_x * sin_yaw + raw_hc14_dog_vel_y * cos_yaw;
-      
-      // position也加上前馈
-      double raw_offset_x = (raw_hc14_dog_vel_x >= 0 ? dog_forward_coeff_x : dog_backward_coeff_x) * std::pow(raw_hc14_dog_vel_x, 3);
-      double raw_offset_y = (raw_hc14_dog_vel_y >= 0 ? dog_forward_coeff_y : dog_backward_coeff_y) * std::pow(raw_hc14_dog_vel_y, 3);
-
-      targetx = target_p.x() + std::max(-1.0, std::min(1.0, raw_offset_x * cos_yaw - raw_offset_y * sin_yaw));
-      targety = target_p.y() + std::max(-1.0, std::min(1.0, raw_offset_x * sin_yaw + raw_offset_y * cos_yaw));
-
-      
     } else {
       target_vx = target_v.x();
       target_vy = target_v.y();
@@ -785,8 +753,8 @@ void cmdCallback(const ros::TimerEvent &e) {
   
 
   // 先将误差和速度转换到无人机vins_yaw坐标系，PID后再转回世界系
-  double cos_yaw = cos(-vins_yaw);
-  double sin_yaw = sin(-vins_yaw);
+  double cos_yaw = cos(vins_yaw);
+  double sin_yaw = sin(vins_yaw);
 
   // 坐标系变换到机体系
   double error_x_body =  error_targetx * cos_yaw - error_targety * sin_yaw;
@@ -801,12 +769,12 @@ void cmdCallback(const ros::TimerEvent &e) {
   double intergral_targety_body = intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
 
   // 机体系下PID
-  double vx_body = target_vx_body + x_p * error_x_body + x_i * intergral_targetx_body + std::max(std::min(x_d * (error_x_body - last_error_x_body), x_d_max), -x_d_max);
-  double vy_body = target_vy_body + y_p * error_y_body + y_i * intergral_targety_body + std::max(std::min(y_d * (error_y_body - last_error_y_body), y_d_max), -y_d_max);
+  double vx_body = target_vx_body + x_p * error_x_body + x_i * intergral_targetx_body + std::max(std::min(x_d * (error_x_body - last_error_x_body), x_d_max), -x_d_max) + v_offset_x;
+  double vy_body = target_vy_body + y_p * error_y_body + y_i * intergral_targety_body + std::max(std::min(y_d * (error_y_body - last_error_y_body), y_d_max), -y_d_max) + v_offset_y;
   double vz = target_vz + z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz), z_d_max), -z_d_max);
 
-  double x_body = target_x_body + pos_x_p * error_x_body + pos_x_i * intergral_targetx_body + std::max(std::min(pos_x_d * (error_x_body - last_error_x_body), pos_x_d_max), -pos_x_d_max);;
-  double y_body = target_y_body + pos_y_p * error_y_body + pos_y_i * intergral_targety_body + std::max(std::min(pos_y_d * (error_y_body - last_error_y_body), pos_y_d_max), -pos_y_d_max);;
+  double x_body = target_x_body + pos_x_p * error_x_body + pos_x_i * intergral_targetx_body + std::max(std::min(pos_x_d * (error_x_body - last_error_x_body), pos_x_d_max), -pos_x_d_max) + offset_x;
+  double y_body = target_y_body + pos_y_p * error_y_body + pos_y_i * intergral_targety_body + std::max(std::min(pos_y_d * (error_y_body - last_error_y_body), pos_y_d_max), -pos_y_d_max) + offset_y;
 
   // 再转回世界系
   cmd.velocity.x = vx_body * cos_yaw + vy_body * sin_yaw;
@@ -857,7 +825,7 @@ void cmdCallback(const ros::TimerEvent &e) {
       }
 
       // Landing模式下的velocity前馈控制
-      if (hc14_offset_ready && raw_hc14_dog_pos_received) {
+      if (hc14_offset_ready && hc14_dog_pos_received) {
         // 基于dog_pos的velocity前馈                
         target_lost_v.x() += (target_vx - last_target_v.x()) * 0.8;
         target_lost_v.y() += (target_vy - last_target_v.y()) * 0.8;
@@ -892,6 +860,13 @@ void cmdCallback(const ros::TimerEvent &e) {
       quadrotor_msgs::TakeoffLand land;
       land.takeoff_land_cmd = 2;
       land_pub_.publish(land);
+      
+      // 发布到ROS话题
+      std_msgs::Float64 yaw_diff_msg;
+      yaw_diff_msg.data = angle_diff;
+      yaw_offset_pub.publish(yaw_diff_msg);
+      std::cout << "Published yaw diff: " << angle_diff * 180.0 / M_PI << " degrees" << std::endl;
+      
       land_triger_received_ = false;
       triger_received_ = false;
       land_lock_timer = 0;
@@ -914,16 +889,11 @@ void cmdCallback(const ros::TimerEvent &e) {
   intergral_targety = std::max(std::min(intergral_targety + 0.01 * error_targety, integral_limit_y), -integral_limit_y);
   intergral_targetz = std::max(std::min(intergral_targetz + 0.01 * error_targetz, integral_limit_z), -integral_limit_z);
 
-  // 先加offset，pid的地方已经加上了
-  cmd.velocity.x += v_offset_x * cos(vins_yaw) - v_offset_y * sin(vins_yaw);
-  cmd.velocity.y += v_offset_x * sin(vins_yaw) + v_offset_y * cos(vins_yaw);
-  cmd.velocity.z += v_forward_offset_z;
-
-  // 再做上下限限制
+  // 做上下限限制
   cmd.velocity.x = std::max(-2.0, std::min(2.0, cmd.velocity.x));
   cmd.velocity.y = std::max(-2.0, std::min(2.0, cmd.velocity.y));
   cmd.velocity.z = std::max(-0.7, std::min(0.7, cmd.velocity.z));
-  
+
   // 根据yaw diff大小调整position和vins_p的距离
   // double position_scale = std::max(0.0, 1.0 - std::abs(angle_diff) / (M_PI/2)); // yaw差越大，position距离越小
   
@@ -1010,53 +980,22 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     } 
     else {
         last_target_timer++;
-        if (last_target_timer >= 2)
+        if (last_target_timer >= 20)
             target_receive = false;
     }
     
     // 检查dog_pos_received状态（模仿target_count的逻辑）
-    if (raw_hc14_dog_pos_count != last_raw_hc14_dog_pos_count) {
-        raw_hc14_dog_pos_received = true;
-        last_raw_hc14_dog_pos_count = raw_hc14_dog_pos_count;
+    if (hc14_dog_pos_count != last_hc14_dog_pos_count) {
+        hc14_dog_pos_received = true;
+        last_hc14_dog_pos_count = hc14_dog_pos_count;
         last_hc14_dog_pos_timer = 0;  // 重置dog_pos的timer
     } else {
         last_hc14_dog_pos_timer++;
         if (last_hc14_dog_pos_timer >= 5)  // 连续5次没有新包才重置
-        raw_hc14_dog_pos_received = false;
+        hc14_dog_pos_received = false;
     }
 
 
-    // 处理hc14_dog数据：当同时收到target和hc14数据时，维护yaw差值补偿
-    if (target_receive && raw_hc14_dog_pos_received) {
-        double current_yaw_offset = raw_hc14_dog_yaw - target_dog_yaw;
-        double yaw_offset_diff = current_yaw_offset - yaw_offset;
-        // 处理角度环绕问题
-        if (yaw_offset_diff > M_PI) {
-          yaw_offset_diff -= 2 * M_PI;
-        } else if (yaw_offset_diff < -M_PI) {
-          yaw_offset_diff += 2 * M_PI;
-        }
-
-        // 对yaw offset进行线性滤波，防止突变
-        yaw_offset += 0.05 * yaw_offset_diff;
-        
-        // 标记hc14_dog信息可用，采用计数器方式防止抖动
-        if (std::fabs(yaw_offset_diff) < 5.0/180.0 * M_PI) {
-          if (!hc14_offset_ready)
-            std::cout << "hc14_offset_ready!" << std::endl;
-          hc14_offset_ready = true;
-        }
-        if (std::fabs(yaw_offset_diff) > 45.0/180.0 * M_PI) {
-          yaw_offset_exceed_timer++;
-          if (yaw_offset_exceed_timer > 5) {
-            std::cout << "yaw_offset_diff too large!" << std::endl;
-            hc14_offset_ready = false;
-            yaw_offset_exceed_timer = 0;
-          }
-        } else {
-          yaw_offset_exceed_timer = 0;
-        }
-    }
 
     // 处理precise_mode切换逻辑
     if (triger_received_) {
@@ -1067,12 +1006,12 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           angle_diff += 2 * M_PI;
         }
         Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-        if (!precise_mode && ((angle_diff < 10.0/180.0 * M_PI && (vins_p - target_top).norm() < 1.0) || land_triger_received_))
+        if (!precise_mode && target_receive && ((angle_diff < 10.0/180.0 * M_PI && (vins_p - target_top).norm() < 1.0) || land_triger_received_))
         {
             precise_mode = true;
             std::cout << "precise_mode: true" << std::endl;
         }
-        else if (precise_mode && ((vins_p - target_top).norm() > 2.0 && !land_triger_received_))
+        else if (precise_mode && ((!target_receive || (vins_p - target_top).norm() > 2.0) && !land_triger_received_))
         {
             precise_mode = false;
             std::cout << "precise_mode: false" << std::endl;
@@ -1130,7 +1069,7 @@ void auto_landing_detect(const ros::TimerEvent &event) {
   }
 
   if (!land_triger_received_ && target_receive && 
-    hc14_offset_ready && raw_hc14_dog_pos_received &&
+    hc14_offset_ready && hc14_dog_pos_received &&
     std::fabs(target_v.x() - vins_v.x()) < 0.5 && 
     std::fabs(target_v.y() - vins_v.y()) < 0.5 && 
     std::fabs(target_v.z() - vins_v.z()) < 0.5 &&
@@ -1173,8 +1112,8 @@ int main(int argc, char **argv) {
   ros::Subscriber traj_sub_ = nh.subscribe<nav_msgs::Path>("/drone2/planning/traj", 10, traj_callback);
   ros::Subscriber traj_v_sub_ = nh.subscribe<nav_msgs::Path>("/traj_v", 10, traj_v_callback);
   
-  // 订阅dog_pos话题
-  ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos", 10, dog_pos_callback);
+  // 订阅处理后的dog_pos话题
+  ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos_processed", 10, dog_pos_callback);
   
 
   pos_cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd", 50);
@@ -1183,6 +1122,7 @@ int main(int argc, char **argv) {
   test_mark_pub_ = nh.advertise<std_msgs::Float64>("/test_mark", 50);
   land_triger_pub = nh.advertise<geometry_msgs::PoseStamped>("/land_triger", 50);
   debug_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/debug_info", 50); // 添加调试信息发布器
+  yaw_offset_pub = nh.advertise<std_msgs::Float64>("/yaw_diff_preset", 10); // 发布飞机和狗的yaw差值
   
   ros::Timer init_timer = nh.createTimer(ros::Duration(2.0), initCallback);
 

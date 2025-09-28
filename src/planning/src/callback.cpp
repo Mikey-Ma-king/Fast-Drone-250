@@ -13,12 +13,9 @@ extern double target_dog_yaw;
 extern bool target_receive;
 extern int target_count;
 
-extern Eigen::Vector3d raw_hc14_dog_vel;
-extern int raw_hc14_dog_pos_count;
-extern double raw_hc14_dog_yaw;
-extern double hc14_dog_yaw;
-extern double yaw_offset;
 extern Eigen::Vector3d hc14_dog_vel;
+extern int hc14_dog_pos_count;
+extern double hc14_dog_yaw;
 extern bool hc14_offset_ready;
 
 extern double AOA_x;
@@ -194,6 +191,7 @@ void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 
 void triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     triger_received_ = true;
+    stop_triger_received_ = false;
 }
 
 void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
@@ -202,6 +200,8 @@ void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
 
 void stop_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     stop_triger_received_ = true;
+    land_triger_received_ = false;
+    triger_received_ = false;
 }
 
 void heartbeatCallback(const std_msgs::EmptyConstPtr &msg) {
@@ -225,62 +225,17 @@ void pid_callback(const std_msgs::Float64MultiArray::ConstPtr& msg) {
 }
 
 void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
-    // 暂时存储新进来的dog速度数据
-    Eigen::Vector3d current_raw_hc14_dog_vel;
-    current_raw_hc14_dog_vel.x() = msg->twist.twist.linear.x;
-    current_raw_hc14_dog_vel.y() = msg->twist.twist.linear.y;
-    current_raw_hc14_dog_vel.z() = msg->twist.twist.linear.z;
-    double current_raw_hc14_dog_yaw = msg->pose.pose.orientation.w;
+    // 直接使用处理后的dog速度数据（狗坐标系）
+    hc14_dog_vel.x() = msg->twist.twist.linear.x;
+    hc14_dog_vel.y() = msg->twist.twist.linear.y;
+    hc14_dog_vel.z() = msg->twist.twist.linear.z;
     
-    // 给狗的速度加上上下限
-    const double max_dog_velocity = 1.5;  // 最大速度限制 (m/s)
-    const double min_dog_velocity = -1.5; // 最小速度限制 (m/s)
+    // 使用处理后的yaw（在twist.angular.x中）
+    hc14_dog_yaw = msg->twist.twist.angular.x;
     
-    current_raw_hc14_dog_vel.x() = std::max(min_dog_velocity, std::min(max_dog_velocity, current_raw_hc14_dog_vel.x()));
-    current_raw_hc14_dog_vel.y() = std::max(min_dog_velocity, std::min(max_dog_velocity, current_raw_hc14_dog_vel.y()));
-    current_raw_hc14_dog_vel.z() = std::max(min_dog_velocity, std::min(max_dog_velocity, current_raw_hc14_dog_vel.z()));
+    // 从orientation.z读取precise_yaw_offset_ready状态
+    hc14_offset_ready = (msg->pose.pose.orientation.z > 0.5);
     
-    // 滤波
-    static bool hc14_dog_vel_initialized = false;
-    if (!hc14_dog_vel_initialized) {
-        raw_hc14_dog_vel = current_raw_hc14_dog_vel;
-        raw_hc14_dog_yaw = current_raw_hc14_dog_yaw;
-        hc14_dog_vel_initialized = true;
-    } else {
-        // 狗头
-        raw_hc14_dog_vel.x() = 0.7 * raw_hc14_dog_vel.x() + 0.3 * current_raw_hc14_dog_vel.x();
-        // 狗侧
-        // raw_hc14_dog_vel.y() = 0.85 * raw_hc14_dog_vel.y() + 0.15 * current_raw_hc14_dog_vel.y();
-        raw_hc14_dog_vel.y() = 0.7 * raw_hc14_dog_vel.y() + 0.3 * current_raw_hc14_dog_vel.y();
-        // 狗上
-        raw_hc14_dog_vel.z() = current_raw_hc14_dog_vel.z();
-        // yaw滤波?
-        double delta_yaw = current_raw_hc14_dog_yaw - raw_hc14_dog_yaw;
-        if (delta_yaw > M_PI) {
-            delta_yaw -= 2 * M_PI;
-        } else if (delta_yaw < -M_PI) {
-            delta_yaw += 2 * M_PI;
-        }
-        raw_hc14_dog_yaw += 0.2 * delta_yaw; 
-        // raw_hc14_dog_yaw = current_raw_hc14_dog_yaw;
-    }
 
-    // 生成处理后的hc14_dog信息
-    if (hc14_offset_ready)
-    {
-        hc14_dog_yaw = raw_hc14_dog_yaw - yaw_offset;
-        if (hc14_dog_yaw > M_PI) {
-            hc14_dog_yaw -= 2 * M_PI;
-        } else if (hc14_dog_yaw < -M_PI) {
-            hc14_dog_yaw += 2 * M_PI;
-        }
-
-        double sin_yaw = sin(hc14_dog_yaw);
-        double cos_yaw = cos(hc14_dog_yaw);
-        hc14_dog_vel.x() = raw_hc14_dog_vel.x() * cos_yaw - raw_hc14_dog_vel.y() * sin_yaw;
-        hc14_dog_vel.y() = raw_hc14_dog_vel.x() * sin_yaw + raw_hc14_dog_vel.y() * cos_yaw;
-        hc14_dog_vel.z() = raw_hc14_dog_vel.z();
-
-    }
-    raw_hc14_dog_pos_count++;  // 收到包时计数器+1 
+    hc14_dog_pos_count++;  // 收到包时计数器+1 
 }

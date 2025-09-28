@@ -11,17 +11,49 @@ SERIAL_PORT = "/dev/USB_AOA"
 BAUD_RATE = 921600
 TIMEOUT = 0.1  # 超时时间，避免过度等待
 
-measurement_variance = 0.03  # 设备标定出的测量噪声方差
-process_variance = 0.001  # 适用于静止情况，移动可设 2000+
+# 卡尔曼滤波参数
+measurement_variance_dis = 0.03
+process_variance_dis = 0.001
+
+measurement_variance_angle = 0.01
+process_variance_angle = 0.001
 
 # 存储不同标签的卡尔曼滤波变量
 kalman_state = {}  # 估计值 x_k
 kalman_covariance = {}  # 估计协方差 P_k
 
-def apply_kalman_filter(tag_id, measurement):
+angle_pre = -1
+angle_rad = 0
+score = 0
+
+timer = 1
+def check_is_valid(delta_angle):
+    """ 检查角速度是否有效 """
+    global score, timer
+    
+    if delta_angle <= 15:
+        timer += 0.2
+        score += 0.005 * timer * timer
+    else:
+        timer -= 10
+        score -= 5 * timer * timer
+    timer = min(max(timer, 1), 30)
+    score = min(max(score, 0), 10)
+
+    # print(timer,score)
+
+    return score >= 5
+
+
+def apply_kalman_filter(tag_id, measurement, measurement_var, process_var, flag=True):
     """ 对测距数据应用卡尔曼滤波 """
     global kalman_state, kalman_covariance
 
+    if not flag:
+        kalman_state = {}
+        kalman_covariance = {}
+
+        
     if tag_id not in kalman_state:
         # 初始化卡尔曼滤波
         kalman_state[tag_id] = measurement
@@ -29,10 +61,10 @@ def apply_kalman_filter(tag_id, measurement):
     else:
         # 预测步骤
         predicted_state = kalman_state[tag_id]
-        predicted_covariance = kalman_covariance[tag_id] + process_variance
+        predicted_covariance = kalman_covariance[tag_id] + process_var
 
         # 更新步骤
-        kalman_gain = predicted_covariance / (predicted_covariance + measurement_variance)
+        kalman_gain = predicted_covariance / (predicted_covariance + measurement_var)
         new_state = predicted_state + kalman_gain * (measurement - predicted_state)
         new_covariance = (1 - kalman_gain) * predicted_covariance
 
@@ -40,7 +72,9 @@ def apply_kalman_filter(tag_id, measurement):
         kalman_state[tag_id] = new_state
         kalman_covariance[tag_id] = new_covariance
 
+
     return kalman_state[tag_id]
+
 
 # **解析 3 字节的 int24_t**
 def parse_int24(data):
@@ -50,6 +84,8 @@ def parse_int24(data):
 
 # **解析 AOA NodeFrame0**
 def parse_nlink_aoa_nodeframe0(data):
+    global angle_pre, angle_rad
+
     FRAME_HEADER = b'\x55\x07'  # 帧头
     HEADER_SIZE = 21  # 固定头部大小
     ANCHOR_DATA_SIZE = 10  # 每个基站数据大小 (role + id + dis(3) + angle(2) + RSSI(2) + reserved(2))
@@ -91,14 +127,20 @@ def parse_nlink_aoa_nodeframe0(data):
 
             distance_mm = parse_int24(distance_bytes)  # 解析 int24_t 距离
             distance_m = distance_mm / 1000.0  # 转换为米
-            angle_rad = math.radians(angle / 100.0)  # 角度转换为弧度制
+
+            angle_pre = angle_rad
+            angle_rad = math.radians(angle / 100.0)
+            angle_delta = math.degrees(abs(angle_rad - angle_pre))
+            flag = check_is_valid(angle_delta)
+
+            filtered_distance = apply_kalman_filter(f"{tag_id}_{anchor_id}_distance", distance_m, measurement_variance_dis, process_variance_dis)
+            filtered_angle = apply_kalman_filter(f"{tag_id}_{anchor_id}_angle", angle_rad,measurement_variance_angle, process_variance_angle,flag)
 
             parsed_data["anchors"].append({
                 "anchor_id": anchor_id,
-                "distance_m": distance_m,
-                "angle_rad": angle_rad,
-                "fp_rssi": fp_rssi,
-                "rx_rssi": rx_rssi
+                "distance_m": filtered_distance,
+                "angle_rad": filtered_angle,
+                "sending_flag": flag
             })
 
             offset += ANCHOR_DATA_SIZE  # 移动到下一个基站
@@ -136,27 +178,31 @@ def main():
             if parsed_result:
                 for anchor in parsed_result["anchors"]:
                     distance = anchor["distance_m"]
-                    distance1 = apply_kalman_filter("a0" , distance)
+                    # distance1 = apply_kalman_filter("a0" , distance)
                     angle_rad = anchor["angle_rad"]
+                    flag = anchor["sending_flag"]
 
+                    
                     # **创建 ROS1 消息**
-                    msg = Odometry()
-                    msg.header.stamp = rospy.Time.now()
-                    msg.header.frame_id = "aoa_tag"
+                    if flag:
+                        msg = Odometry()
+                        msg.header.stamp = rospy.Time.now()
+                        msg.header.frame_id = "aoa_tag"
 
-                    # **设置位置 (x = 距离)**
-                    msg.pose.pose.position.x = distance
+                        # **设置位置 (x = 距离)**
+                        msg.pose.pose.position.x = distance
 
-                    # **设置角度 (w = 角度转换为弧度制)**
-                    msg.pose.pose.orientation.w = angle_rad
+                        # **设置角度 (w = 角度转换为弧度制)**
+                        msg.pose.pose.orientation.w = angle_rad
 
-                    pub.publish(msg)
-                    pub_count += 1
-                    if (time.time() -start_time) > 4:
-                        print(f"linktarck:Hz:{int(pub_count/4)},Updated data:{distance,int(angle_rad/3.14*180)}")
-                        start_time = time.time()
-                        pub_count = 0
-
+                        pub.publish(msg)
+                        pub_count += 1
+                        if (time.time() -start_time) > 4:
+                            print(f"linktrack:Hz:{int(pub_count/4)},Updated data:{distance,int(angle_rad/3.14*180)}")
+                            start_time = time.time()
+                            pub_count = 0
+                    else:
+                        print("linktrack not falid")
                     # rospy.loginfo(f"📡 发布数据: 距离={distance:.3f} m, 角度 (弧度)={angle_rad:.4f} rad")
 
     except serial.SerialException:

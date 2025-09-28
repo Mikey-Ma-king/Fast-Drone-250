@@ -28,6 +28,18 @@ vins_p =np.array([0.0,0.0,0.0])
 vins_v =np.array([0.0,0.0,0.0])
 vins_yaw = 0
 
+# dog_pos_processor相关变量
+dog_pos_p = np.array([0.0,0.0,0.0])
+dog_pos_v = np.array([0.0,0.0,0.0])
+dog_pos_yaw = 0.0
+dog_pos_received_ = 0
+aoa_converged = False
+last_target_ekf_time = 0.0
+
+# 参数设置
+aoa_fast_v_max = np.array([1.5, 1.5, 0.8])  # AOA收敛时的速度限制
+aoa_slow_v_max = np.array([0.5, 0.5, 0.8])  # AOA未收敛时的速度限制
+
 land_height_limit = [1.2, 1.5]
 land_target_z = 0.0
 
@@ -77,6 +89,7 @@ class all_Subscriber:
         self.yaw = 0
         # 订阅 /vins_fusion/imu_propagate 主题
         self.pose_sub = rospy.Subscriber('/target_ekf_odom', Odometry, self.pose_cb0)
+        self.dog_pos_sub = rospy.Subscriber('/dog_pos_processed', Odometry, self.dog_pos_cb)
         self.triger_sub = rospy.Subscriber('/land_triger', PoseStamped, self.triger_cb)
         self.vins_sub = rospy.Subscriber('/vins_fusion/imu_propagate', Odometry, self.vins_cb)
         self.track_sub = rospy.Subscriber('/triger', PoseStamped, self.track_cb)
@@ -128,6 +141,31 @@ class all_Subscriber:
         target_v[0] = msg.twist.twist.linear.x
         target_v[1] = msg.twist.twist.linear.y
         target_v[2] = msg.twist.twist.linear.z
+
+    def dog_pos_cb(self, msg):
+        global dog_pos_p
+        global dog_pos_v
+        global dog_pos_yaw
+        global dog_pos_received_
+        global aoa_converged
+        
+        # 获取处理后的狗位置和速度
+        dog_pos_p[0] = msg.pose.pose.position.x
+        dog_pos_p[1] = msg.pose.pose.position.y
+        dog_pos_p[2] = msg.pose.pose.position.z
+        
+        # 狗坐标系速度
+        dog_pos_v[0] = msg.twist.twist.linear.x
+        dog_pos_v[1] = msg.twist.twist.linear.y
+        dog_pos_v[2] = msg.twist.twist.linear.z
+        
+        # 处理后的yaw
+        dog_pos_yaw = msg.twist.twist.angular.x
+        
+        # 从orientation.x读取aoa_converged状态
+        aoa_converged = (msg.pose.pose.orientation.x > 0.5)
+        
+        dog_pos_received_ = 1
 
     def vins_cb(self, msg):
         global vins_p
@@ -333,6 +371,7 @@ vis = TrajectoryVisualizer()
 
 
 pos_cmd_pub = rospy.Publisher('/position_cmd', PositionCommand, queue_size=1)
+stop_triger_pub = rospy.Publisher('/stop_triger', PoseStamped, queue_size=1)
 mpc = DroneMPC(N = 15)
 mpc.N = 15
 mpc.v_max = np.array([1.2, 1.2, 0.8])  # 速度限制
@@ -360,20 +399,34 @@ def run_while_loop():
     global vis
     global target_p_dist,last_target_p_dis,last_last_target_p_dis
     global target_p_dis
-    global target_received_
+    global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_, aoa_converged
+    global aoa_fast_v_max, aoa_slow_v_max
+    global triger
 
     land_time = time.time()
     land_height = vins_p[2]
     while not rospy.is_shutdown():
-        while triger != 1 or target_received_ != 1:
+        while triger != 1 or dog_pos_received_ != 1:
             time.sleep(0.1)
+        # Target选择逻辑：优先使用target_ekf_odom，其次使用dog_pos_processor位置
+        # 检查target_ekf_odom是否有近期反馈
+        current_target_p = dog_pos_p.copy()
+        current_target_v = dog_pos_v.copy()
+        current_target_yaw = dog_pos_yaw
 
-        # mpc.v_max = np.array([0.6*1.2 + 0.4*abs(target_v[0]), 0.6*1.2 + 0.4*abs(target_v[1]), 0.8])
-        # print("target_p:",target_p)
-        target_p_dis[0] = target_p[0]
-        target_p_dis[1] = target_p[1]
-        target_p_dis[2] = min(target_p[2] + land_height_limit[1],max(target_p[2] + land_height_limit[0], vins_p[2]))
+        # 根据AOA收敛状态调整MPC速度限制
+        if aoa_converged:
+            # AOA收敛时使用更高的速度限制
+            mpc.v_max = aoa_fast_v_max
+        else:
+            # AOA未收敛时使用较低的速度限制
+            mpc.v_max = aoa_slow_v_max
 
+        # mpc.v_max = np.array([0.6*1.2 + 0.4*abs(current_target_v[0]), 0.6*1.2 + 0.4*abs(current_target_v[1]), 0.8])
+        # print("target_p:",current_target_p)
+        target_p_dis[0] = current_target_p[0]
+        target_p_dis[1] = current_target_p[1]
+        target_p_dis[2] = min(current_target_p[2] + land_height_limit[1],max(current_target_p[2] + land_height_limit[0], vins_p[2]))
         if x_opt is not None:
             drone_state,accel = traj_get_state(x_opt, u_opt, int((time.time() - MPC_clcyle + shift)/mpc.dt)*mpc.dt, mpc.dt)
         else :
@@ -395,7 +448,7 @@ def run_while_loop():
             target_p_dis[0] = max_dis*(target_p_dis[0] - vins_p[0])/abs(target_p_dis[0] - vins_p[0]) + vins_p[0]
         if (abs(target_p_dis[1] - vins_p[1]) > max_dis) :
             target_p_dis[1] = max_dis*(target_p_dis[1] - vins_p[1])/abs(target_p_dis[1] - vins_p[1]) + vins_p[1]
-        target_traj = predict_target_trajectory(target_p_dis, target_v, mpc.N, mpc.dt , target_yaw)
+        target_traj = predict_target_trajectory(target_p_dis, current_target_v, mpc.N, mpc.dt , current_target_yaw)
         start_time = time.time()
         new_x_opt, new_u_opt = mpc.solve(drone_state, target_traj)
         end_time = time.time()
