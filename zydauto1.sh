@@ -10,7 +10,7 @@ sleep 2
 ./tracker.sh &
 
 ./read.sh&
-# ./MPC.sh &
+./MPC.sh &
 python3 dog_pos_processor.py &
 roslaunch mavros px4.launch &
 wait

@@ -1,0 +1,8 @@
+prefix=/home/pc/Fast-Drone-250/install
+
+Name: loop_fusion
+Description: Description of loop_fusion
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

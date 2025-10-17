@@ -1,0 +1,8 @@
+prefix=/home/pc/Fast-Drone-250/install
+
+Name: flow_publisher
+Description: Description of flow_publisher
+Version: 0.0.0
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: roscpp std_msgs message_runtime

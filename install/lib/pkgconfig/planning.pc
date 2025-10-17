@@ -1,0 +1,8 @@
+prefix=/home/pc/Fast-Drone-250/install
+
+Name: planning
+Description: Description of planning
+Version: 0.0.0
+Cflags: -I${prefix}/include -I/usr/include/eigen3
+Libs: -L${prefix}/lib -lplanning
+Requires: quadrotor_msgs roscpp

@@ -10,6 +10,7 @@ from math import pi
 import threading
 from scipy.interpolate import CubicSpline
 from quadrotor_msgs.msg import PositionCommand
+from quadrotor_msgs.msg import TakeoffLand
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped, Point32
@@ -38,7 +39,8 @@ last_target_ekf_time = 0.0
 
 # 参数设置
 aoa_fast_v_max = np.array([1.5, 1.5, 0.8])  # AOA收敛时的速度限制
-aoa_slow_v_max = np.array([0.5, 0.5, 0.8])  # AOA未收敛时的速度限制
+# aoa_slow_v_max = np.array([0.5, 0.5, 0.8])  # AOA未收敛时的速度限制
+aoa_slow_v_max = np.array([1.5, 1.5, 0.8])  # AOA未收敛时的速度限制
 
 land_height_limit = [1.2, 1.5]
 land_target_z = 0.0
@@ -93,6 +95,7 @@ class all_Subscriber:
         self.triger_sub = rospy.Subscriber('/land_triger', PoseStamped, self.triger_cb)
         self.vins_sub = rospy.Subscriber('/vins_fusion/imu_propagate', Odometry, self.vins_cb)
         self.track_sub = rospy.Subscriber('/triger', PoseStamped, self.track_cb)
+        self.takeoff_sub = rospy.Subscriber('/px4ctrl/takeoff_land', TakeoffLand, self.takeoff_cb)
         # 用于保存T1和R1
         # 触发条件的标志
         self.target_filter = TargetFilter(alpha=0.3, reset_interval=0.5)
@@ -201,8 +204,18 @@ class all_Subscriber:
         land_triger = 1
 
     def track_cb(self, msg):
-        global triger
+        global triger, target_received_, dog_pos_received_
         triger = 1
+        target_received_ = 0
+        dog_pos_received_ = 0
+
+    def takeoff_cb(self, msg):
+        # 检测起飞指令：1 表示起飞
+        if hasattr(msg, 'takeoff_land_cmd') and msg.takeoff_land_cmd == 1:
+            # 起飞时重置目标与dog_pos接收标志
+            global target_received_, dog_pos_received_
+            target_received_ = 0
+            dog_pos_received_ = 0
 
 class TrajectoryVisualizer:
     def __init__(self, frame_id="world"):
@@ -403,16 +416,30 @@ def run_while_loop():
     global aoa_fast_v_max, aoa_slow_v_max
     global triger
 
-    land_time = time.time()
-    land_height = vins_p[2]
     while not rospy.is_shutdown():
-        while triger != 1 or dog_pos_received_ != 1:
+        while triger != 1 or (dog_pos_received_ != 1 and target_received_ != 1):
             time.sleep(0.1)
         # Target选择逻辑：优先使用target_ekf_odom，其次使用dog_pos_processor位置
         # 检查target_ekf_odom是否有近期反馈
-        current_target_p = dog_pos_p.copy()
-        current_target_v = dog_pos_v.copy()
-        current_target_yaw = dog_pos_yaw
+        if dog_pos_received_ == 1:
+            current_target_p = dog_pos_p.copy()
+            current_target_v = dog_pos_v.copy()
+            current_target_yaw = dog_pos_yaw
+        elif target_received_ == 1:
+            current_target_p = target_p.copy()
+            current_target_v = target_v.copy()
+            current_target_yaw = target_yaw
+
+        # 在狗位置基础上添加提前量：沿着vins到狗的方向延伸0.5m
+        # dog_to_vins = current_target_p[:2] - vins_p[:2]  # 狗位置到vins位置的向量（2D）
+        # distance_to_vins = np.linalg.norm(dog_to_vins)
+        # if distance_to_vins > 0.001:  # 避免除零
+        #     # 单位方向向量：从狗指向vins
+        #     direction_unit = dog_to_vins / distance_to_vins
+        #     # 提前量：在狗到vins的方向上延伸0.5m
+        #     lead_offset = 0.5 * direction_unit
+        #     current_target_p[0] += lead_offset[0]
+        #     current_target_p[1] += lead_offset[1]
 
         # 根据AOA收敛状态调整MPC速度限制
         if aoa_converged:

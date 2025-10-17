@@ -1,0 +1,8 @@
+prefix=/home/pc/Fast-Drone-250/install
+
+Name: vins
+Description: Description of vins
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: flow_publisher

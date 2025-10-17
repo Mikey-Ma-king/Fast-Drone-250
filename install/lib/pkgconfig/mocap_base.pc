@@ -1,0 +1,8 @@
+prefix=/home/pc/Fast-Drone-250/install
+
+Name: mocap_base
+Description: Description of mocap_base
+Version: 0.0.1
+Cflags: -I${prefix}/include -I/usr/include -I/usr/include/eigen3
+Libs: -L${prefix}/lib -lmocap_base_driver -lmocap_kalman_filter
+Requires: geometry_msgs

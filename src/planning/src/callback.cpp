@@ -35,6 +35,10 @@ extern double z_p;
 extern double z_i;
 extern double z_d;
 
+extern double intergral_targetx;
+extern double intergral_targety;
+extern double intergral_targetz;
+
 extern bool triger_received_;
 extern bool land_triger_received_;
 extern bool stop_triger_received_;
@@ -192,6 +196,9 @@ void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 void triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     triger_received_ = true;
     stop_triger_received_ = false;
+    intergral_targetx = 0;
+    intergral_targety = 0;
+    intergral_targetz = 0;
 }
 
 void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {

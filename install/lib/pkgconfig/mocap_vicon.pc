@@ -1,0 +1,8 @@
+prefix=/home/pc/Fast-Drone-250/install
+
+Name: mocap_vicon
+Description: Description of mocap_vicon
+Version: 0.0.1
+Cflags: -I${prefix}/include -I/usr/include -I/usr/include/eigen3
+Libs: -L${prefix}/lib -lmocap_vicon_driver -lViconDataStreamSDK_CPP /usr/lib/x86_64-linux-gnu/libboost_thread.so.1.71.0 /usr/lib/x86_64-linux-gnu/libboost_chrono.so.1.71.0
+Requires: roscpp geometry_msgs tf tf_conversions mocap_base

@@ -113,29 +113,43 @@ int target_land_flag = 0;
 double yaw_kp = 1.2;  // 偏航角速度控制增益
 double max_yaw_rate = 1.3;  // 最大偏航角速度限制 (rad/s)
 
-double camera_offset = 0.4;
+double camera_offset = 0.45; // 关键参数
 
-double x_p = 0.2;
-double x_i = 0.85;
+double x_p = 0.33;
+double x_i = 0.8;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = -0.6;
-double offset_x = 0.0;
 double integral_limit_x = 1;
 
-double y_p = 0.2;
-double y_i = 0.85;
+double y_p = 0.33;
+double y_i = 0.8;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
-double offset_y = 0.0;
 double integral_limit_y = 1;
 
-double z_p = 0.3;
-double z_i = 0.1;
+double z_p = 0.5;
+double z_i = 0.0;
 double z_d = 0.0;
 double z_d_max = 0.12;
 double integral_limit_z = 1.0;
+
+double mpc_x_p = 0.25;
+double mpc_x_i = 0.8;
+double mpc_x_d = 0.0;
+double mpc_x_d_max = 0.12;
+
+double mpc_y_p = 0.25;
+double mpc_y_i = 0.8;
+double mpc_y_d = 0.0;
+double mpc_y_d_max = 0.12;
+
+double mpc_z_p = 0.3;
+double mpc_z_i = 0.2;
+double mpc_z_d = 0.0;
+double mpc_z_d_max = 0.12;
+
 
 // 位置控制PID参数，感觉没用
 double pos_x_p = 0.0;
@@ -150,10 +164,20 @@ double pos_y_d = 0.0;
 double pos_y_d_max = 0.1;
 double pos_integral_limit_y = 0.5;
 
+double mpc_pos_x_p = 0.0;
+double mpc_pos_x_i = 0.0;
+double mpc_pos_x_d = 0.0;
+double mpc_pos_x_d_max = 0.1;
+
+double mpc_pos_y_p = 0.0;
+double mpc_pos_y_i = 0.0;
+double mpc_pos_y_d = 0.0;
+double mpc_pos_y_d_max = 0.1;
+
+
 #ifdef SIMULATE
 v_offset_x = 0.0;
 v_offset_y = 0.0;
-v_forward_offset_z = 0.0;
 #endif
 
 std::vector<double> land_height_limit = {1.2, 1.5};
@@ -691,8 +715,12 @@ void cmdCallback(const ros::TimerEvent &e) {
 
   } else {
     if (hc14_offset_ready && hc14_dog_pos_received) {
-      target_vx = std::fabs(hc14_dog_vel.x()) >= 0.15 ? hc14_dog_vel.x() : 0.0;
-      target_vy = std::fabs(hc14_dog_vel.y()) >= 0.15 ? hc14_dog_vel.y() : 0.0;
+      // target_vx = std::fabs(hc14_dog_vel.x()) >= -1.0 ? hc14_dog_vel.x() : 0.0;
+      // target_vy = std::fabs(hc14_dog_vel.y()) >= -1.0 ? hc14_dog_vel.y() : 0.0;
+
+      target_vx = hc14_dog_vel.x() * std::min(std::fabs(hc14_dog_vel.x()*hc14_dog_vel.x()/0.04), 1.0);
+      target_vy = hc14_dog_vel.y() * std::min(std::fabs(hc14_dog_vel.y()*hc14_dog_vel.y()/0.04), 1.0);
+
 
       targetx = target_p.x() + std::max(-1.0, std::min(1.0, camera_offset * target_vx));
       targety = target_p.y() + std::max(-1.0, std::min(1.0, camera_offset * target_vy));
@@ -756,7 +784,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   double cos_yaw = cos(vins_yaw);
   double sin_yaw = sin(vins_yaw);
 
-  // 坐标系变换到机体系
+  // 坐标系变换到狗体系
   double error_x_body =  error_targetx * cos_yaw - error_targety * sin_yaw;
   double error_y_body =  error_targetx * sin_yaw + error_targety * cos_yaw;
   double last_error_x_body = last_error_targetx * cos_yaw - last_error_targety * sin_yaw;
@@ -768,14 +796,63 @@ void cmdCallback(const ros::TimerEvent &e) {
   double intergral_targetx_body = intergral_targetx * cos_yaw - intergral_targety * sin_yaw;
   double intergral_targety_body = intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
 
-  // 机体系下PID
-  double vx_body = target_vx_body + x_p * error_x_body + x_i * intergral_targetx_body + std::max(std::min(x_d * (error_x_body - last_error_x_body), x_d_max), -x_d_max) + v_offset_x;
-  double vy_body = target_vy_body + y_p * error_y_body + y_i * intergral_targety_body + std::max(std::min(y_d * (error_y_body - last_error_y_body), y_d_max), -y_d_max) + v_offset_y;
-  double vz = target_vz + z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz), z_d_max), -z_d_max);
+  double current_x_p, current_y_p, current_z_p, current_pos_x_p, current_pos_y_p;
+  double current_x_i, current_y_i, current_z_i, current_pos_x_i, current_pos_y_i;
+  double current_x_d, current_y_d, current_z_d, current_pos_x_d, current_pos_y_d;
+  double current_x_d_max, current_y_d_max, current_z_d_max, current_pos_x_d_max, current_pos_y_d_max;
+  
+  if (!precise_mode) {
+    current_x_p = mpc_x_p;
+    current_y_p = mpc_y_p;
+    current_z_p = mpc_z_p;
+    current_pos_x_p = mpc_pos_x_p;
+    current_pos_y_p = mpc_pos_y_p;
+    current_x_i = mpc_x_i;
+    current_y_i = mpc_y_i;
+    current_z_i = mpc_z_i;
+    current_pos_x_i = mpc_pos_x_i;
+    current_pos_y_i = mpc_pos_y_i;
+    current_x_d = mpc_x_d;
+    current_y_d = mpc_y_d;
+    current_z_d = mpc_z_d;
+    current_pos_x_d = mpc_pos_x_d;
+    current_pos_y_d = mpc_pos_y_d;
+    current_x_d_max = mpc_x_d_max;
+    current_y_d_max = mpc_y_d_max;
+    current_z_d_max = mpc_z_d_max;
+    current_pos_x_d_max = mpc_pos_x_d_max;
+    current_pos_y_d_max = mpc_pos_y_d_max;
+  } else {  
+    current_x_p = x_p;
+    current_y_p = y_p;
+    current_z_p = z_p;
+    current_pos_x_p = pos_x_p;
+    current_pos_y_p = pos_y_p;
+    current_x_i = x_i;
+    current_y_i = y_i;
+    current_z_i = z_i;
+    current_pos_x_i = pos_x_i;
+    current_pos_y_i = pos_y_i;
+    current_x_d = x_d;
+    current_y_d = y_d;
+    current_z_d = z_d;
+    current_pos_x_d = pos_x_d;
+    current_pos_y_d = pos_y_d;
+    current_x_d_max = x_d_max;
+    current_y_d_max = y_d_max;
+    current_z_d_max = z_d_max;
+    current_pos_x_d_max = pos_x_d_max;
+    current_pos_y_d_max = pos_y_d_max;
+  }
 
-  double x_body = target_x_body + pos_x_p * error_x_body + pos_x_i * intergral_targetx_body + std::max(std::min(pos_x_d * (error_x_body - last_error_x_body), pos_x_d_max), -pos_x_d_max) + offset_x;
-  double y_body = target_y_body + pos_y_p * error_y_body + pos_y_i * intergral_targety_body + std::max(std::min(pos_y_d * (error_y_body - last_error_y_body), pos_y_d_max), -pos_y_d_max) + offset_y;
+  // 狗体系下PID
+  double vx_body = target_vx_body + current_x_p * error_x_body + x_i * intergral_targetx_body + std::max(std::min(x_d * (error_x_body - last_error_x_body), x_d_max), -x_d_max);
+  double vy_body = target_vy_body + current_y_p * error_y_body + y_i * intergral_targety_body + std::max(std::min(y_d * (error_y_body - last_error_y_body), y_d_max), -y_d_max);
+  double vz = target_vz + current_z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(z_d * (error_targetz - last_error_targetz), z_d_max), -z_d_max);
 
+  double x_body = target_x_body + current_pos_x_p * error_x_body + pos_x_i * intergral_targetx_body + std::max(std::min(pos_x_d * (error_x_body - last_error_x_body), pos_x_d_max), -pos_x_d_max);
+  double y_body = target_y_body + current_pos_y_p * error_y_body + pos_y_i * intergral_targety_body + std::max(std::min(pos_y_d * (error_y_body - last_error_y_body), pos_y_d_max), -pos_y_d_max);
+  
   // 再转回世界系
   cmd.velocity.x = vx_body * cos_yaw + vy_body * sin_yaw;
   cmd.velocity.y = - vx_body * sin_yaw + vy_body * cos_yaw;
@@ -785,16 +862,20 @@ void cmdCallback(const ros::TimerEvent &e) {
   cmd.position.y = - x_body * sin_yaw + y_body * cos_yaw;
   cmd.position.z = targetz;
 
-  if (!precise_mode) {
-    // 角度限制逻辑，防止一次转角太大
-    if (std::fabs(angle_diff) > 1.5)
-      cmd.yaw = 0.4 * angle_diff + vins_yaw;
-    else
-      cmd.yaw = angle_diff + vins_yaw;
+  // if (!precise_mode) {
+  //   // 角度限制逻辑，防止一次转角太大
+  //   if (std::fabs(angle_diff) > 1.5)
+  //     cmd.yaw = 0.4 * angle_diff + vins_yaw;
+  //   else
+  //     cmd.yaw = angle_diff + vins_yaw;
 
-    // P控制器计算角速度
-    cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
-  }
+  //   // P控制器计算角速度
+  //   cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
+  // }
+  // else{
+  //   cmd.yaw = vins_yaw;
+  //   cmd.yaw_dot = 0.0;
+  // }
 
   // cmd.position.x = targetx;
   // cmd.position.y = targety;
@@ -889,29 +970,13 @@ void cmdCallback(const ros::TimerEvent &e) {
   intergral_targety = std::max(std::min(intergral_targety + 0.01 * error_targety, integral_limit_y), -integral_limit_y);
   intergral_targetz = std::max(std::min(intergral_targetz + 0.01 * error_targetz, integral_limit_z), -integral_limit_z);
 
+  cmd.velocity.x += v_offset_x * cos(vins_yaw) - v_offset_y * sin(vins_yaw);
+  cmd.velocity.y += v_offset_x * sin(vins_yaw) + v_offset_y * cos(vins_yaw);
+
   // 做上下限限制
   cmd.velocity.x = std::max(-2.0, std::min(2.0, cmd.velocity.x));
   cmd.velocity.y = std::max(-2.0, std::min(2.0, cmd.velocity.y));
-  cmd.velocity.z = std::max(-0.7, std::min(0.7, cmd.velocity.z));
-
-  // 根据yaw diff大小调整position和vins_p的距离
-  // double position_scale = std::max(0.0, 1.0 - std::abs(angle_diff) / (M_PI/2)); // yaw差越大，position距离越小
-  
-  // Eigen::Vector3d original_pos(cmd.position.x, cmd.position.y, cmd.position.z);
-
-  // Eigen::Vector3d adjusted_pos = vins_p + (original_pos - vins_p) * position_scale;
-  
-  // // 应用调整后的position
-  // cmd.position.x = adjusted_pos.x();
-  // cmd.position.y = adjusted_pos.y();
-  // cmd.position.z = adjusted_pos.z();
-  
-  // // 位置限制在当前位置前后2m
-  // cmd.position.x = std::max(vins_p.x() - 2.0, std::min(vins_p.x() + 2.0, cmd.position.x));
-  // cmd.position.y = std::max(vins_p.y() - 2.0, std::min(vins_p.y() + 2.0, cmd.position.y));
-  // cmd.position.z = std::max(vins_p.z() - 1.0, std::min(vins_p.z() + 1.0, cmd.position.z));
-
-
+  cmd.velocity.z = std::max(-0.8, std::min(0.8, cmd.velocity.z));
 
   // 发布调试信息到plotjuggler
   // quadrotor_msgs::PositionCommand debug_msg;
@@ -999,19 +1064,13 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
 
     // 处理precise_mode切换逻辑
     if (triger_received_) {
-        double angle_diff = target_dog_yaw - vins_yaw;
-        if (angle_diff > M_PI) {
-          angle_diff -= 2 * M_PI;
-        } else if (angle_diff < -M_PI) {
-          angle_diff += 2 * M_PI;
-        }
         Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-        if (!precise_mode && target_receive && ((angle_diff < 10.0/180.0 * M_PI && (vins_p - target_top).norm() < 1.0) || land_triger_received_))
+        if (!precise_mode && target_receive && (((vins_p - target_top).norm() < 0.6) || land_triger_received_))
         {
             precise_mode = true;
             std::cout << "precise_mode: true" << std::endl;
         }
-        else if (precise_mode && ((!target_receive || (vins_p - target_top).norm() > 2.0) && !land_triger_received_))
+        else if (precise_mode && ((!target_receive || ((vins_p - target_top).norm() > 2.0)) && !land_triger_received_))
         {
             precise_mode = false;
             std::cout << "precise_mode: false" << std::endl;

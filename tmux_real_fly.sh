@@ -21,7 +21,7 @@ CMDS=(
     "./zydauto1.sh"
     "./zydauto2.sh"
     "python3 rebort.py"
-    ""
+    "./stop_triger.sh"
     "./pub_triger.sh"
     "./land_triger.sh"
 )

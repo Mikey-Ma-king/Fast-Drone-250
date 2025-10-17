@@ -21,13 +21,15 @@ class DogPosProcessor:
         self.aoa_base_angle = math.radians(0.0)
         
         # AOA base angle控制相关变量
-        self.aoa_base_angle_auto = True  # 是否自动计算aoa_base_angle
-        self.aoa_base_angle_manual = 0.0  # 手动设置的aoa_base_angle
+        self.aoa_base_angle_auto = False  # 是否自动计算aoa_base_angle
         self.aoa_rotation_speed = math.radians(10.0)  # 旋转速度（度/秒）
         self.aoa_rotation_timer = 0.0
         self.aoa_last_received_time = 0.0
         self.aoa_rotation_started = False
         self.aoa_yaw_target_reached = False
+        # 手动覆盖：开启后强制使用手动角度，不自动调整、不旋转
+        self.aoa_manual_override = True
+        self.aoa_base_angle_manual = 0.0
         
         # Trigger状态
         self.trigger_received = False
@@ -480,7 +482,7 @@ class DogPosProcessor:
         
         # 维护AOA增量（在具备vins与原始狗位姿时）
         # 只有在初始化后且收到trigger后才进行AOA迭代
-        if self.trigger_received and self.vins_received and self.raw_dog_pos_received and self.aoa_received:
+        if self.trigger_received and self.vins_received and self.aoa_received:
             if self.AOA_valid():
                 # 基于AOA的世界系目标点（参考withdraw思路）
                 aoa_px = self.vins_pos[0] + self.aoa_distance * math.cos(self.final_yaw_wo_aoa + self.aoa_base_angle + self.aoa_angle)
@@ -599,8 +601,8 @@ class DogPosProcessor:
         return True
 
     def aoa_callback(self, msg):
-        # AOA距离（position.x）与角度（orientation.x），与仓库约定一致
-        self.aoa_angle = msg.pose.pose.orientation.x
+        # AOA距离（position.x）与角度（orientation.w），与仓库约定一致
+        self.aoa_angle = msg.pose.pose.orientation.w
         # 用光流高度修正：水平距离 = sqrt(max(0, d^2 - h^2))，直接覆盖 aoa_distance
         height = (self.flow_z - self.flow_height_bias)
         d2 = max(0.0, msg.pose.pose.position.x * msg.pose.pose.position.x - height * height)
@@ -620,6 +622,12 @@ class DogPosProcessor:
     def update_aoa_base_angle(self):
         """更新AOA base angle的自动控制逻辑"""
         current_time = rospy.Time.now().to_sec()
+        
+        # 手动覆盖：强制固定为手动值并直接返回
+        if self.aoa_manual_override:
+            self.aoa_base_angle = self.aoa_base_angle_manual
+            self.aoa_rotation_started = False
+            return
         
         if self.aoa_base_angle_auto:
             # 自动模式：计算基于位置差的aoa_base_angle
