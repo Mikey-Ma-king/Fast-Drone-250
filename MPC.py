@@ -28,6 +28,7 @@ land_triger = 0
 vins_p =np.array([0.0,0.0,0.0])
 vins_v =np.array([0.0,0.0,0.0])
 vins_yaw = 0
+reset_mpc = 0
 
 # dog_pos_processor相关变量
 dog_pos_p = np.array([0.0,0.0,0.0])
@@ -212,10 +213,13 @@ class all_Subscriber:
     def takeoff_cb(self, msg):
         # 检测起飞指令：1 表示起飞
         if hasattr(msg, 'takeoff_land_cmd') and msg.takeoff_land_cmd == 1:
-            # 起飞时重置目标与dog_pos接收标志
-            global target_received_, dog_pos_received_
+            # 起飞时仅设置状态量，主循环中清空轨迹
+            global target_received_, dog_pos_received_, triger
+            global reset_mpc
             target_received_ = 0
             dog_pos_received_ = 0
+            triger = 0
+            reset_mpc = 1
 
 class TrajectoryVisualizer:
     def __init__(self, frame_id="world"):
@@ -415,10 +419,16 @@ def run_while_loop():
     global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_, aoa_converged
     global aoa_fast_v_max, aoa_slow_v_max
     global triger
+    global reset_mpc
 
     while not rospy.is_shutdown():
         while triger != 1 or (dog_pos_received_ != 1 and target_received_ != 1):
             time.sleep(0.1)
+        # 如果有起飞重置请求，则在主循环中清空轨迹
+        if reset_mpc == 1:
+            x_opt = None
+            u_opt = None
+            reset_mpc = 0
         # Target选择逻辑：优先使用target_ekf_odom，其次使用dog_pos_processor位置
         # 检查target_ekf_odom是否有近期反馈
         if dog_pos_received_ == 1:

@@ -834,7 +834,7 @@ void read::reda(ros::NodeHandle& nh) {
         }
         // 转换为灰度图像，非必要
         cv::Mat gray;
-        // frame.convertTo(frame, -1, 1.1, 20); // 轻微提高对比度和亮度
+        // frame.convertTo(frame, -1, 1.0, -20); // 增强对比度，降低亮度
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
         std::vector<int> markerIds;
@@ -979,33 +979,33 @@ void read::reda(ros::NodeHandle& nh) {
                     averagePosition += (position * 0.5);
                 }
                 else if (currentMarkerId == 0){
-                    position.x() = position.x() - 0.205*std::cos(fin_deg) + 0.14*std::sin(fin_deg);
-                    position.y() = position.y() - 0.205*std::sin(fin_deg) - 0.14*std::cos(fin_deg);
+                    position.x() = position.x() - 0.193*std::cos(fin_deg) + 0.136*std::sin(fin_deg);
+                    position.y() = position.y() - 0.193*std::sin(fin_deg) - 0.136*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 1){
-                    position.x() = position.x() + 0.205*std::cos(fin_deg) + 0.14*std::sin(fin_deg);
-                    position.y() = position.y() + 0.205*std::sin(fin_deg) - 0.14*std::cos(fin_deg);
+                    position.x() = position.x() + 0.193*std::cos(fin_deg) + 0.136*std::sin(fin_deg);
+                    position.y() = position.y() + 0.193*std::sin(fin_deg) - 0.136*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 2){
-                    position.x() = position.x() + 0.205*std::cos(fin_deg) - 0.14*std::sin(fin_deg);
-                    position.y() = position.y() + 0.205*std::sin(fin_deg) + 0.14*std::cos(fin_deg);
+                    position.x() = position.x() + 0.193*std::cos(fin_deg) - 0.136*std::sin(fin_deg);
+                    position.y() = position.y() + 0.193*std::sin(fin_deg) + 0.136*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 3){
-                    position.x() = position.x() - 0.205*std::cos(fin_deg) - 0.14*std::sin(fin_deg);
-                    position.y() = position.y() - 0.205*std::sin(fin_deg) + 0.14*std::cos(fin_deg);
+                    position.x() = position.x() - 0.193*std::cos(fin_deg) - 0.136*std::sin(fin_deg);
+                    position.y() = position.y() - 0.193*std::sin(fin_deg) + 0.136*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 4){
-                    position.x() = position.x() + 0.14*std::sin(fin_deg);
-                    position.y() = position.y() - 0.14*std::cos(fin_deg);
+                    position.x() = position.x() + 0.136*std::sin(fin_deg);
+                    position.y() = position.y() - 0.136*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 5){
-                    position.x() = position.x() + 0.14*std::sin(fin_deg);
-                    position.y() = position.y() - 0.14*std::cos(fin_deg);
+                    position.x() = position.x() + 0.136*std::sin(fin_deg);
+                    position.y() = position.y() - 0.136*std::cos(fin_deg);
                     averagePosition += (position * 0.65);
                 }
 
@@ -1101,8 +1101,8 @@ void read::reda(ros::NodeHandle& nh) {
                     // 基于VINS的机体朝向，将最终位置向机体左侧偏移2cm
                     // 从VINS旋转矩阵R1获取yaw（机体朝向，世界系）
                     double yaw_vins = std::atan2(R1(1,0), R1(0,0));
-                    filtered_x -= 0.02 * std::sin(yaw_vins);
-                    filtered_y += 0.02 * std::cos(yaw_vins);
+                    filtered_x -= 0.00 * std::sin(yaw_vins);
+                    filtered_y += 0.00 * std::cos(yaw_vins);
 
                     odom_msg.pose.pose.position.x = round_to_decimal_places(filtered_x, 2);
                     odom_msg.pose.pose.position.y = round_to_decimal_places(filtered_y, 2);

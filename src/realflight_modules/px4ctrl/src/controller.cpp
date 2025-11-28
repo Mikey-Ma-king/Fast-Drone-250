@@ -1,4 +1,5 @@
 #include "controller.h"
+#include <algorithm>
 
 using namespace std;
 
@@ -40,6 +41,14 @@ LinearControl::calculateControl(const Desired_State_t &des,
       double cos = std::cos(yaw_odom);
       roll = (des_acc(0) * sin - des_acc(1) * cos )/ param_.gra;
       pitch = (des_acc(0) * cos + des_acc(1) * sin )/ param_.gra;
+      
+      // Limit roll and pitch angles if max_angle is set (positive value)
+      if (param_.max_angle > 0.0)
+      {
+        roll = std::max(-param_.max_angle, std::min(param_.max_angle, roll));
+        pitch = std::max(-param_.max_angle, std::min(param_.max_angle, pitch));
+      }
+      
       // yaw = fromQuaternion2yaw(des.q);
       yaw_imu = fromQuaternion2yaw(imu.q);
       // Eigen::Quaterniond q = Eigen::AngleAxisd(yaw,Eigen::Vector3d::UnitZ())

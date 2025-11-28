@@ -14,9 +14,12 @@ extern bool target_receive;
 extern int target_count;
 
 extern Eigen::Vector3d hc14_dog_vel;
+extern Eigen::Vector3d hc14_dog_pos;
 extern int hc14_dog_pos_count;
 extern double hc14_dog_yaw;
-extern bool hc14_offset_ready;
+extern double hc14_dog_yaw_rate;  // 狗通信角速度
+extern bool hc14_offset_yaw_ready;
+extern bool hc14_offset_pos_ready;
 
 extern double AOA_x;
 extern double AOA_w;
@@ -42,7 +45,9 @@ extern double intergral_targetz;
 extern bool triger_received_;
 extern bool land_triger_received_;
 extern bool stop_triger_received_;
+extern bool last_cmd_initialized;
 extern ros::Time heartbeat_time_;
+extern bool precise_mode;
 bool odom_received_ = false;
 
 void initCallback(const ros::TimerEvent &event) {
@@ -195,10 +200,13 @@ void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 
 void triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     triger_received_ = true;
+    land_triger_received_ = false;
     stop_triger_received_ = false;
+    precise_mode = false;
     intergral_targetx = 0;
     intergral_targety = 0;
     intergral_targetz = 0;
+    last_cmd_initialized = false;
 }
 
 void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
@@ -236,13 +244,20 @@ void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     hc14_dog_vel.x() = msg->twist.twist.linear.x;
     hc14_dog_vel.y() = msg->twist.twist.linear.y;
     hc14_dog_vel.z() = msg->twist.twist.linear.z;
+
+    hc14_dog_pos.x() = msg->pose.pose.position.x;
+    hc14_dog_pos.y() = msg->pose.pose.position.y;
+    hc14_dog_pos.z() = msg->pose.pose.position.z;
     
     // 使用处理后的yaw（在twist.angular.x中）
     hc14_dog_yaw = msg->twist.twist.angular.x;
     
-    // 从orientation.z读取precise_yaw_offset_ready状态
-    hc14_offset_ready = (msg->pose.pose.orientation.z > 0.5);
+    // 读取狗通信角速度（在twist.angular.y中）
+    hc14_dog_yaw_rate = msg->twist.twist.angular.y;
     
+    // 从orientation.z读取precise_yaw_offset_ready状态
+    hc14_offset_yaw_ready = (msg->pose.pose.orientation.z > 0.5);
+    hc14_offset_pos_ready = (msg->pose.pose.orientation.y > 0.5);
 
     hc14_dog_pos_count++;  // 收到包时计数器+1 
 }

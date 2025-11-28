@@ -2,7 +2,7 @@ from pymavlink import mavutil
 import time
 
 # 连接到飞控
-connection = mavutil.mavlink_connection('/dev/ttyACM0', baud=921600)
+connection = mavutil.mavlink_connection('/dev/USB_px4', baud=921600)
 
 def reboot_px4():
     """ 发送 MAVLink 命令来重启 PX4 飞控 """

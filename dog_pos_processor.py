@@ -14,6 +14,111 @@ from std_msgs.msg import Bool, Float64
 from geometry_msgs.msg import PoseStamped
 from quadrotor_msgs.msg import TakeoffLand
 
+class KalmanFilter:
+    """简单的卡尔曼滤波器，用于位置和速度滤波"""
+    def __init__(self, process_noise=0.01, measurement_noise=0.1):
+        """
+        初始化卡尔曼滤波器
+        
+        参数:
+            process_noise: 过程噪声协方差
+            measurement_noise: 测量噪声协方差
+        """
+        # 状态向量: [x, y, z, vx, vy, vz]
+        self.state = np.zeros(6)
+        self.covariance = np.eye(6) * 100.0  # 初始协方差矩阵
+        
+        # 过程噪声协方差矩阵 Q
+        self.Q = np.eye(6) * process_noise
+        
+        # 测量噪声协方差矩阵 R
+        self.R = np.eye(6) * measurement_noise
+        
+        # 状态转移矩阵 F (恒定速度模型，将在predict中根据dt更新)
+        self.F_base = np.eye(6)  # 基础矩阵
+        
+        # 观测矩阵 H (直接观测位置和速度)
+        self.H = np.eye(6)
+        
+        self.initialized = False
+        self.last_time = None
+    
+    def predict(self, dt):
+        """预测步骤"""
+        if not self.initialized:
+            return
+        
+        # 构建状态转移矩阵（恒定速度模型）
+        F = self.F_base.copy()
+        F[0, 3] = dt  # x = x + vx * dt
+        F[1, 4] = dt  # y = y + vy * dt
+        F[2, 5] = dt  # z = z + vz * dt
+        
+        # 预测状态
+        self.state = F @ self.state
+        
+        # 预测协方差
+        self.covariance = F @ self.covariance @ F.T + self.Q
+    
+    def update(self, measurement):
+        """
+        更新步骤
+        
+        参数:
+            measurement: 测量值 [x, y, z, vx, vy, vz]
+        """
+        if not self.initialized:
+            # 首次初始化
+            self.state = measurement.copy()
+            self.initialized = True
+            return
+        
+        # 计算残差
+        residual = measurement - self.H @ self.state
+        
+        # 计算残差协方差
+        S = self.H @ self.covariance @ self.H.T + self.R
+        
+        # 计算卡尔曼增益
+        K = self.covariance @ self.H.T @ np.linalg.inv(S)
+        
+        # 更新状态
+        self.state = self.state + K @ residual
+        
+        # 更新协方差
+        self.covariance = (np.eye(6) - K @ self.H) @ self.covariance
+    
+    def filter(self, position, velocity, dt):
+        """
+        滤波主函数
+        
+        参数:
+            position: 位置 [x, y, z]
+            velocity: 速度 [vx, vy, vz]
+            dt: 时间间隔
+        
+        返回:
+            滤波后的位置和速度
+        """
+        # 构建测量向量
+        measurement = np.concatenate([position, velocity])
+        
+        # 预测
+        self.predict(dt)
+        
+        # 更新
+        self.update(measurement)
+        
+        # 返回滤波后的位置和速度
+        return self.state[:3].copy(), self.state[3:].copy()
+    
+    def reset(self):
+        """重置滤波器"""
+        self.state = np.zeros(6)
+        self.covariance = np.eye(6) * 100.0
+        self.initialized = False
+        self.last_time = None
+
 class DogPosProcessor:
     def __init__(self):
         rospy.init_node('dog_pos_processor', anonymous=True)
@@ -43,6 +148,9 @@ class DogPosProcessor:
         self.pos_exceed_threshold = 0.3  # 30cm，位置超限阈值
         self.pos_exceed_max_count = 5  # 位置超限最大计数
         self.pos_filter_gain = 0.05  # 位置滤波增益
+        
+        # 前馈系数（参考traj_server.cpp）
+        self.camera_offset = 0.37  # 关键参数，与traj_server一致
 
         # AOA相关参数
         self.aoa_min_distance = 0.5  # m
@@ -116,6 +224,21 @@ class DogPosProcessor:
 
         # 初始化标志
         self.dog_vel_initialized = False
+        
+        # 狗通信角速度相关变量
+        self.dog_yaw_rate = 0.0  # 狗通信的角速度
+        self.last_dog_yaw_time = 0.0  # 上一帧的时间
+        self.yaw_rate_filter_gain = 0.3  # 角速度滤波增益
+        self.dog_yaw_rate_initialized = False
+        
+        # 卡尔曼滤波器
+        self.kf = KalmanFilter(process_noise=0.01, measurement_noise=0.1)
+        self.kf_enabled = True  # 是否启用卡尔曼滤波
+        self.last_kf_time = None  # 上次滤波时间
+        self.yaw_filter_gain_kf = 0.3  # yaw 滤波增益（简单一阶滤波）
+        self.filtered_yaw = 0.0  # 滤波后的yaw
+        self.yaw_filter_initialized = False
+        self.kf_timeout = 1.0  # 卡尔曼滤波超时时间（秒），超过此时间间隔则重置
         
         # 发布者 - 使用Odometry格式
         self.dog_pos_pub = rospy.Publisher(
@@ -252,9 +375,39 @@ class DogPosProcessor:
             delta_yaw = current_raw_dog_yaw - self.raw_dog_yaw
             delta_yaw = self.normalize_angle(delta_yaw)
             self.raw_dog_yaw += 0.2 * delta_yaw
+
+            self.update_dog_yaw_rate(delta_yaw)
         
         # 收到raw dog pos后立即发布处理后的dog_pos
         self.publish_processed_dog_pos()
+    
+    def update_dog_yaw_rate(self, delta_yaw):
+        """更新狗通信角速度
+        
+        参数:
+            delta_yaw: 角度差（已经过normalize_angle处理）
+        """
+        current_time = rospy.Time.now().to_sec()
+        
+        if not self.dog_yaw_rate_initialized:
+            # 首次初始化
+            self.last_dog_yaw_time = current_time
+            self.dog_yaw_rate = 0.0
+            self.dog_yaw_rate_initialized = True
+        else:
+            # 计算时间差
+            dt = current_time - self.last_dog_yaw_time
+            
+            if dt > 0.001:  # 避免除零，至少1ms间隔
+                # 计算瞬时角速度（delta_yaw已经处理了角度循环问题）
+                instant_yaw_rate = delta_yaw / dt
+                
+                # 简单滤波
+                self.dog_yaw_rate = (1 - self.yaw_rate_filter_gain) * self.dog_yaw_rate + \
+                                   self.yaw_rate_filter_gain * instant_yaw_rate
+                
+                # 更新上一帧时间
+                self.last_dog_yaw_time = current_time
     
     def target_callback(self, msg):
         """处理目标数据（来自read模块的target_ekf_odom）"""
@@ -296,6 +449,10 @@ class DogPosProcessor:
             self.precise_yaw_offset_ready = False
             self.precise_pos_offset_ready = False
             self.trigger_received = False
+            # 重置速度相关变量
+            self.dog_yaw_rate_initialized = False
+            self.dog_vel_initialized = False
+            self.dog_yaw_rate = 0.0
 
             # 重置AOA相关增量
             self.aoa_delta_p[:] = 0.0
@@ -389,11 +546,11 @@ class DogPosProcessor:
             self.yaw_offset = self.raw_dog_yaw - (self.vins_yaw + diff)
             
             # 位置偏移：raw_dog_pos
-            # 将vins位置按照-yaw_offset旋转后，加到pos_offset后面
-            cos_neg_yaw = math.cos(self.yaw_offset)
-            sin_neg_yaw = math.sin(self.yaw_offset)
-            rotated_vins_x = cos_neg_yaw * self.vins_pos[0] - sin_neg_yaw * self.vins_pos[1]
-            rotated_vins_y = sin_neg_yaw * self.vins_pos[0] + cos_neg_yaw * self.vins_pos[1]
+            # 将vins位置按照yaw_offset旋转后，加到pos_offset后面
+            cos_yaw = math.cos(self.yaw_offset)
+            sin_yaw = math.sin(self.yaw_offset)
+            rotated_vins_x = cos_yaw * self.vins_pos[0] - sin_yaw * self.vins_pos[1]
+            rotated_vins_y = sin_yaw * self.vins_pos[0] + cos_yaw * self.vins_pos[1]
             rotated_vins_pos = np.array([rotated_vins_x, rotated_vins_y, self.vins_pos[2]])
             tmp_p = np.array([
                 self.raw_dog_pos.pose.pose.position.x,
@@ -445,12 +602,20 @@ class DogPosProcessor:
                     self.raw_dog_pos.pose.pose.position.z
                 ])
 
-                # 将世界坐标系下的位置差旋转yaw_offset，得到狗坐标系下的pos_offset
-                cos_neg_yaw = math.cos(self.yaw_offset)
-                sin_neg_yaw = math.sin(self.yaw_offset)
+                # 计算前馈偏移量（基于final_dog_vel，在世界坐标系下）
+                # 参考traj_server: offset = camera_offset * vel
+                # target_dog_pos先加上前馈偏移量（在世界坐标系下）
+                target_dog_pos_with_ff = np.array([
+                    self.target_dog_pos[0] + self.camera_offset * self.final_dog_vel[0],
+                    self.target_dog_pos[1] + self.camera_offset * self.final_dog_vel[1],
+                    self.target_dog_pos[2]
+                ])
                 
-                rotated_x = cos_neg_yaw * self.target_dog_pos[0] - sin_neg_yaw * self.target_dog_pos[1]
-                rotated_y = sin_neg_yaw * self.target_dog_pos[0] + cos_neg_yaw * self.target_dog_pos[1]
+                # 然后将加上前馈后的target_dog_pos旋转到狗坐标系
+                cos_yaw = math.cos(self.yaw_offset)
+                sin_yaw = math.sin(self.yaw_offset)
+                rotated_x = cos_yaw * target_dog_pos_with_ff[0] - sin_yaw * target_dog_pos_with_ff[1]
+                rotated_y = sin_yaw * target_dog_pos_with_ff[0] + cos_yaw * target_dog_pos_with_ff[1]
                 
                 current_pos_offset = raw_dog_pos - np.array([rotated_x, rotated_y, self.target_dog_pos[2]])
                 
@@ -469,6 +634,12 @@ class DogPosProcessor:
                         rospy.loginfo("precise_pos_offset_ready!")
                         if self.precise_yaw_offset_ready:
                             self.initialized = True  # 通过迭代达到precise_yaw_offset_ready和precise_pos_offset_ready，设置initialized
+                        # 位置收敛时重置卡尔曼滤波器
+                        rospy.loginfo("Position converged, resetting Kalman filter")
+                        self.kf.reset()
+                        self.last_kf_time = None
+                        self.yaw_filter_initialized = False
+                        self.filtered_yaw = 0.0
                     self.precise_pos_offset_ready = True
                 
                 if pos_offset_diff > self.pos_exceed_threshold:
@@ -567,6 +738,50 @@ class DogPosProcessor:
         ])
         self.final_dog_yaw = target_yaw
 
+        # 卡尔曼滤波：只有pos收敛了才使用滤波器
+        if self.kf_enabled and self.precise_pos_offset_ready:
+            current_time = rospy.Time.now().to_sec()
+            
+            if self.last_kf_time is None:
+                self.last_kf_time = current_time
+                dt = 0.05  # 默认50ms
+            else:
+                dt = current_time - self.last_kf_time
+                if dt <= 0:
+                    dt = 0.05  # 防止非正时间间隔
+                
+                # 如果dt超过超时阈值，重置滤波器
+                if dt > self.kf_timeout:
+                    rospy.logwarn(f"Kalman filter timeout (dt={dt:.2f}s > {self.kf_timeout:.2f}s), resetting filter")
+                    self.kf.reset()
+                    self.yaw_filter_initialized = False
+                    self.filtered_yaw = 0.0
+                    dt = 0.05  # 重置后使用默认时间间隔
+            
+            # 对位置和速度进行卡尔曼滤波
+            filtered_pos, filtered_vel = self.kf.filter(
+                self.final_dog_pos.copy(),
+                self.final_dog_vel.copy(),
+                dt
+            )
+            
+            # 对 yaw 进行简单一阶滤波（处理角度环绕）
+            if not self.yaw_filter_initialized:
+                self.filtered_yaw = self.final_dog_yaw
+                self.yaw_filter_initialized = True
+            else:
+                yaw_diff = self.normalize_angle(self.final_dog_yaw - self.filtered_yaw)
+                self.filtered_yaw = self.normalize_angle(
+                    self.filtered_yaw + self.yaw_filter_gain_kf * yaw_diff
+                )
+            
+            # 使用滤波后的值
+            self.final_dog_pos = filtered_pos
+            self.final_dog_vel = filtered_vel
+            self.final_dog_yaw = self.filtered_yaw
+            
+            self.last_kf_time = current_time
+
         # 使用self的变量填充msg
         msg.pose.pose.position.x = self.final_dog_pos[0]
         msg.pose.pose.position.y = self.final_dog_pos[1]
@@ -585,7 +800,7 @@ class DogPosProcessor:
         
         # 最终yaw放在twist.angular.x,另外，y和z放上转换后的狗的速度
         msg.twist.twist.angular.x = self.final_dog_yaw
-        msg.twist.twist.angular.y = 0.0
+        msg.twist.twist.angular.y = self.dog_yaw_rate  # 发布狗通信角速度
         msg.twist.twist.angular.z = 0.0
 
         self.dog_pos_pub.publish(msg)

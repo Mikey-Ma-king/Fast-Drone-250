@@ -43,9 +43,9 @@
 
 using namespace cv;
 
-// #define SIMULATE
-# define SAVE_VIDEO
-# define SCREEN_SHOW
+#define SIMULATE
+// # define SAVE_VIDEO
+// # define SCREEN_SHOW
 // # define DELAY_TEST
 
 namespace image{
@@ -130,7 +130,7 @@ private:
     Eigen::Matrix3d R1;  // 滤波后的旋转矩阵
     int vins_input_count;   // VINS输入计数器
     static const int UPDATE_INTERVAL = 5;  // 每5次输入更新一次T1R1
-    static const int FIXED_DELAY = 44;     // 固定延迟帧数
+    static const int FIXED_DELAY = 45;     // 固定延迟帧数
 
     std::vector<Eigen::Vector4d> svo_list;
     Bezierpredict svopredict;
@@ -161,7 +161,7 @@ private:
     ros::NodeHandle nh_;
     std::thread initThread_;
     UAVStateListener1 uav_state_listener;
-    gos_listener gos_sub;
+    // gos_listener gos_sub;
     std::vector<Eigen::Vector3d> pos; // 定义pos的存储结构
     Eigen::Matrix3d R1 = Eigen::Matrix3d::Identity();
     Eigen::Vector3d T1{0.0, 0.0, 0.0};
