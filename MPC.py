@@ -35,16 +35,17 @@ dog_pos_p = np.array([0.0,0.0,0.0])
 dog_pos_v = np.array([0.0,0.0,0.0])
 dog_pos_yaw = 0.0
 dog_pos_received_ = 0
-aoa_converged = False
 last_target_ekf_time = 0.0
 
-# 参数设置
-aoa_fast_v_max = np.array([1.5, 1.5, 0.8])  # AOA收敛时的速度限制
-# aoa_slow_v_max = np.array([0.5, 0.5, 0.8])  # AOA未收敛时的速度限制
-aoa_slow_v_max = np.array([1.5, 1.5, 0.8])  # AOA未收敛时的速度限制
+# 目标速度历史记录（用于速度拟合）
+target_vel_history = []  # 存储最近10个速度点
+target_vel_history_times = []  # 存储对应的时间戳
+
 
 land_height_limit = [1.2, 1.5]
 land_target_z = 0.0
+land_triger_time = 0.0  # 降落触发时间
+land_vins_z = 0.0  # 降落时的vins z坐标
 
 class TargetFilter:
     def __init__(self, alpha=0.3, reset_interval=0.5):
@@ -151,7 +152,6 @@ class all_Subscriber:
         global dog_pos_v
         global dog_pos_yaw
         global dog_pos_received_
-        global aoa_converged
         
         # 获取处理后的狗位置和速度
         dog_pos_p[0] = msg.pose.pose.position.x
@@ -165,10 +165,7 @@ class all_Subscriber:
         
         # 处理后的yaw
         dog_pos_yaw = msg.twist.twist.angular.x
-        
-        # 从orientation.x读取aoa_converged状态
-        aoa_converged = (msg.pose.pose.orientation.x > 0.5)
-        
+
         dog_pos_received_ = 1
 
     def vins_cb(self, msg):
@@ -201,7 +198,10 @@ class all_Subscriber:
             vins_v[0] = msg.twist.twist.linear.x
             vins_v[1] = msg.twist.twist.linear.y
     def triger_cb(self, msg):
-        global land_triger
+        global land_triger, land_triger_time, land_vins_z, vins_p
+        if land_triger == 0:  # 只在第一次接收到降落信号时记录
+            land_triger_time = time.time()
+            land_vins_z = vins_p[2]
         land_triger = 1
 
     def track_cb(self, msg):
@@ -312,21 +312,66 @@ class TrajectoryVisualizer:
             self.publishers[topic] = rospy.Publisher(topic, msg_type, queue_size=10)
         return self.publishers[topic]
 
-def predict_target_trajectory(pos, vel, N, dt, target_yaw):
-    """生成移动平台的参考轨迹"""
-    global land_triger
+def predict_target_trajectory(pos, vel, N, dt, target_yaw, direct_predict=True, ave_num=1, shift=0.2):
+    """
+    生成移动平台的参考轨迹
+    根据 direct_predict 参数选择：
+    - True: 使用速度历史取平均，然后进行直线预测（如果历史点不足ave_num个，则使用传入的vel）
+    - False: 使用速度历史进行一次函数（直线）拟合，然后通过积分得到位置（曲线预测），如果历史点不足ave_num个，则使用传入的vel进行直线预测
+    返回的轨迹从shift时间之后开始
+    """
+    global land_triger, target_vel_history, target_vel_history_times
+    
     vel_pro = vel.copy()
-    # if(land_triger == 1):
-    #     vel_pro[2] = -0.08
-    # if(land_triger == 1):
-    #     vel_pro[0] = vel[0] * math.cos(target_yaw)
-    #     vel_pro[1] = vel[1] * math.sin(target_yaw)
-    #     vel_pro[2] = -0.08
-    # else:
-    #     vel_pro[0] = vel[0]
-    #     vel_pro[1] = vel[1]
-    #     vel_pro[2] = vel[2]
-    return np.array([np.concatenate([pos + vel * t * dt, vel_pro]) for t in range(N+1)])
+    
+    # 更新速度历史记录（无论哪种方法都要保存）
+    current_time = time.time()
+    target_vel_history.append(vel.copy())
+    target_vel_history_times.append(current_time)
+    
+    # 只保留最近ave_num个速度点
+    if len(target_vel_history) > ave_num:
+        target_vel_history.pop(0)
+        target_vel_history_times.pop(0)
+    
+    # 如果历史点不足ave_num个，使用传入的vel进行直线预测（从shift之后开始）
+    if len(target_vel_history) < ave_num:
+        return np.array([np.concatenate([pos + vel * (t * dt + shift), vel_pro]) for t in range(N+1)])
+    
+    # 如果使用直线预测（速度平均）
+    if direct_predict:
+        # 使用ave_num个历史速度点计算平均速度
+        vel_array = np.array(target_vel_history)  # shape: (ave_num, 3)
+        avg_vel = np.mean(vel_array, axis=0)  # shape: (3,)
+        vel_pro = avg_vel.copy()
+        
+        # 使用平均速度进行直线预测（从shift之后开始）
+        return np.array([np.concatenate([pos + avg_vel * (t * dt + shift), vel_pro]) for t in range(N+1)])
+    
+    # 以下为使用速度历史进行一次函数（直线）拟合的逻辑（曲线预测）
+    vel_array = np.array(target_vel_history)  # shape: (ave_num, 3)
+    time_array = np.array(target_vel_history_times)  # shape: (ave_num,)
+    
+    # 将时间戳转换为相对于最新点的时间差（秒）
+    latest_time = time_array[-1]
+    time_diffs = time_array - latest_time  # 负数，最新点为0
+    
+    # 对x, y, z三个轴分别进行一次函数拟合速度: v(t) = a*t + b
+    # 构建系数矩阵 A: [t, 1] for each point
+    A = np.vstack([time_diffs, np.ones(len(time_diffs))]).T
+    
+    # 对每个轴分别求解最小二乘，得到速度的系数矩阵 coeffs: shape (3, 2) [axis, coeff]
+    coeffs = np.zeros((3, 2))  # [axis, (a, b)]
+    for axis in range(3):
+        coeffs[axis] = np.linalg.lstsq(A, vel_array[:, axis], rcond=None)[0]
+    
+    # 使用列表推导式生成轨迹（从shift之后开始）
+    # 速度: v(t) = a*t + b
+    # 位置: p(t) = ∫v(t)dt = (a/2)*t^2 + b*t + p0
+    return np.array([np.concatenate([
+        np.array([pos[axis] + (coeffs[axis][0]/2) * (t * dt + shift)**2 + coeffs[axis][1] * (t * dt + shift) for axis in range(3)]),  # 位置（速度的积分）
+        np.array([coeffs[axis][0] * (t * dt + shift) + coeffs[axis][1] for axis in range(3)])  # 速度
+    ]) for t in range(N+1)])
 
 def traj_get_state(x_opt, u_opt, future_time, dt):
     """
@@ -345,7 +390,7 @@ def traj_get_state(x_opt, u_opt, future_time, dt):
     alpha = steps - idx_base  # 0 <= alpha < 1
     
     # 确保不越界
-    idx_base = min(max(0, idx_base), x_opt.shape[0]-1)  # 需要至少3个点做二次插值
+    idx_base = min(max(0, idx_base), x_opt.shape[0]-2)  # 需要至少3个点做二次插值
     
     # 取三个邻近点
     x0 = x_opt[idx_base]
@@ -390,7 +435,6 @@ vis = TrajectoryVisualizer()
 pos_cmd_pub = rospy.Publisher('/position_cmd', PositionCommand, queue_size=1)
 stop_triger_pub = rospy.Publisher('/stop_triger', PoseStamped, queue_size=1)
 mpc = DroneMPC(N = 15)
-mpc.N = 15
 mpc.v_max = np.array([1.2, 1.2, 0.8])  # 速度限制
 mpc.a_max = np.array([1.0, 1.0, 0.6])  # 加速度限制
 mpc.Q = np.diag([10, 10, 20, 7, 7, 5])  # 位置权重
@@ -416,7 +460,7 @@ def run_while_loop():
     global vis
     global target_p_dist,last_target_p_dis,last_last_target_p_dis
     global target_p_dis
-    global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_, aoa_converged
+    global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_
     global aoa_fast_v_max, aoa_slow_v_max
     global triger
     global reset_mpc
@@ -424,10 +468,14 @@ def run_while_loop():
     while not rospy.is_shutdown():
         while triger != 1 or (dog_pos_received_ != 1 and target_received_ != 1):
             time.sleep(0.1)
-        # 如果有起飞重置请求，则在主循环中清空轨迹
+        # 如果有起飞重置请求，则在主循环中清空轨迹和历史记录
         if reset_mpc == 1:
             x_opt = None
             u_opt = None
+            # 清空速度历史记录
+            global target_vel_history, target_vel_history_times
+            target_vel_history = []
+            target_vel_history_times = []
             reset_mpc = 0
         # Target选择逻辑：优先使用target_ekf_odom，其次使用dog_pos_processor位置
         # 检查target_ekf_odom是否有近期反馈
@@ -451,19 +499,19 @@ def run_while_loop():
         #     current_target_p[0] += lead_offset[0]
         #     current_target_p[1] += lead_offset[1]
 
-        # 根据AOA收敛状态调整MPC速度限制
-        if aoa_converged:
-            # AOA收敛时使用更高的速度限制
-            mpc.v_max = aoa_fast_v_max
-        else:
-            # AOA未收敛时使用较低的速度限制
-            mpc.v_max = aoa_slow_v_max
-
         # mpc.v_max = np.array([0.6*1.2 + 0.4*abs(current_target_v[0]), 0.6*1.2 + 0.4*abs(current_target_v[1]), 0.8])
         # print("target_p:",current_target_p)
         target_p_dis[0] = current_target_p[0]
         target_p_dis[1] = current_target_p[1]
-        target_p_dis[2] = min(current_target_p[2] + land_height_limit[1],max(current_target_p[2] + land_height_limit[0], vins_p[2]))
+        # 如果接收到降落信号，将z坐标设置为下降的坐标
+        if land_triger == 1:
+            # 类似traj_server中的实现：land_vins_z - 0.5 * (now - land_triger_time)
+            elapsed_time = time.time() - land_triger_time
+            target_p_dis[2] = land_vins_z - 0.5 * elapsed_time
+            # 同时修改目标速度的z分量为下降速度
+            current_target_v[2] = -0.5
+        else:
+            target_p_dis[2] = min(current_target_p[2] + land_height_limit[1],max(current_target_p[2] + land_height_limit[0], vins_p[2]))
         if x_opt is not None:
             drone_state,accel = traj_get_state(x_opt, u_opt, int((time.time() - MPC_clcyle + shift)/mpc.dt)*mpc.dt, mpc.dt)
         else :
@@ -486,8 +534,32 @@ def run_while_loop():
         if (abs(target_p_dis[1] - vins_p[1]) > max_dis) :
             target_p_dis[1] = max_dis*(target_p_dis[1] - vins_p[1])/abs(target_p_dis[1] - vins_p[1]) + vins_p[1]
         target_traj = predict_target_trajectory(target_p_dis, current_target_v, mpc.N, mpc.dt , current_target_yaw)
+        
+        # # 位置约束逻辑：根据target_received_和land_triger决定是否添加位置约束
+        # # 目标坐标只使用x和y，不使用z
+        # if land_triger == 1:
+        #     target_position_for_mpc = np.array([current_target_p[0], current_target_p[1]])  # 只传x和y
+        #     # 使用指数递减函数：距离越小，weight越大
+        #     # 参数计算：距离1m时weight=4，距离20cm时weight=8
+        #     base_weight = 9.51  # 基础权重
+        #     k = 0.866  # 衰减系数
+        #     max_weight = 50.0  # weight上限
+        #     distance = abs(vins_p[2] - current_target_p[2])  # 垂直距离
+        #     position_weight_for_mpc = base_weight * np.exp(-k * distance)
+        #     position_weight_for_mpc = min(position_weight_for_mpc, max_weight)  # 限制上限
+        # elif target_received_ == 1:
+        #     target_position_for_mpc = np.array([target_p[0], target_p[1]])  # 只传x和y
+        #     position_weight_for_mpc = 3.0
+        # else:
+        #     target_position_for_mpc = None
+        #     position_weight_for_mpc = 0.0
+        target_position_for_mpc = None
+        position_weight_for_mpc = 0.0
+
         start_time = time.time()
-        new_x_opt, new_u_opt = mpc.solve(drone_state, target_traj)
+        new_x_opt, new_u_opt = mpc.solve(drone_state, target_traj, 
+                                        target_position=target_position_for_mpc, 
+                                        position_weight=position_weight_for_mpc)
         end_time = time.time()
         # print("MPC solve time: " , end_time - start_time)
 

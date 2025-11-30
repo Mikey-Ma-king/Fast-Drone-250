@@ -1,0 +1,8 @@
+<launch>
+  <!-- 启动 dog_pos_processor 节点 -->
+  <node name="dog_pos_processor" pkg="planning" type="dog_pos_processor" output="screen" />
+
+  <!-- 如果需要参数，可以在这里加载 -->
+  <!-- <param name="param_name" value="xxx" /> -->
+</launch>
+

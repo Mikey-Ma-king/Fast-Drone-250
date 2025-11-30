@@ -14,7 +14,7 @@ PATHS=(
 )
 # 对应命令
 CMDS=(
-    "roslaunch px4 mavros_posix_sitl.launch"
+    "./sim_fly.sh"
     "./xtdrone.sh"
     "python3 fake_target.py"
     "./MPC.sh"

@@ -88,7 +88,7 @@ def parse_nlink_aoa_nodeframe0(data):
 
     FRAME_HEADER = b'\x55\x07'  # 帧头
     HEADER_SIZE = 21  # 固定头部大小
-    ANCHOR_DATA_SIZE = 10  # 每个基站数据大小 (role + id + dis(3) + angle(2) + RSSI(2) + reserved(2))
+    ANCHOR_DATA_SIZE = 11  # 每个基站数据大小 (role + id + dis(3) + angle(2) + RSSI(2) + reserved(2))
 
     if len(data) < HEADER_SIZE:
         return None
@@ -131,7 +131,8 @@ def parse_nlink_aoa_nodeframe0(data):
             angle_pre = angle_rad
             angle_rad = math.radians(angle / 100.0)
             angle_delta = math.degrees(abs(angle_rad - angle_pre))
-            flag = check_is_valid(angle_delta)
+            # flag = check_is_valid(angle_delta)
+            flag = True
 
             filtered_distance = apply_kalman_filter(f"{tag_id}_{anchor_id}_distance", distance_m, measurement_variance_dis, process_variance_dis)
             filtered_angle = apply_kalman_filter(f"{tag_id}_{anchor_id}_angle", angle_rad,measurement_variance_angle, process_variance_angle,flag)
@@ -158,6 +159,15 @@ def main():
     pub = rospy.Publisher('AOA_Tag_data', Odometry, queue_size=10)
     start_time = time.time()
     pub_count = 0
+    
+    # 存储两个anchor的数据
+    anchor1_data = None
+    anchor2_data = None
+    
+    # 简单线性滤波：存储上一次的距离值
+    anchor1_distance_filtered = None
+    anchor2_distance_filtered = None
+    filter_gain = 0.3  # 滤波增益，0.3表示新值权重30%，旧值权重70%
 
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=TIMEOUT)
@@ -176,34 +186,53 @@ def main():
 
             parsed_result = parse_nlink_aoa_nodeframe0(raw_data)
             if parsed_result:
+                # 收集所有anchor的数据
                 for anchor in parsed_result["anchors"]:
+                    anchor_id = anchor["anchor_id"]
                     distance = anchor["distance_m"]
-                    # distance1 = apply_kalman_filter("a0" , distance)
                     angle_rad = anchor["angle_rad"]
-                    flag = anchor["sending_flag"]
-
                     
-                    # **创建 ROS1 消息**
-                    if flag:
-                        msg = Odometry()
-                        msg.header.stamp = rospy.Time.now()
-                        msg.header.frame_id = "aoa_tag"
+                    if anchor["sending_flag"]:
+                        if anchor_id == 1:
+                            # 简单线性滤波
+                            if anchor1_distance_filtered is None:
+                                anchor1_distance_filtered = distance
+                            else:
+                                anchor1_distance_filtered = (1.0 - filter_gain) * anchor1_distance_filtered + filter_gain * distance
+                            anchor1_data = {"distance": anchor1_distance_filtered, "angle": angle_rad}
+                        elif anchor_id == 2:
+                            # 简单线性滤波
+                            if anchor2_distance_filtered is None:
+                                anchor2_distance_filtered = distance
+                            else:
+                                anchor2_distance_filtered = (1.0 - filter_gain) * anchor2_distance_filtered + filter_gain * distance
+                            anchor2_data = {"distance": anchor2_distance_filtered, "angle": angle_rad}
+                
+                # 当两个anchor的数据都准备好时，发布一个消息
+                if anchor1_data is not None and anchor2_data is not None:
+                    msg = Odometry()
+                    msg.header.stamp = rospy.Time.now()
+                    msg.header.frame_id = "aoa_tag"
 
-                        # **设置位置 (x = 距离)**
-                        msg.pose.pose.position.x = distance
+                    # **position.x = anchor 1的距离, position.y = anchor 2的距离**
+                    msg.pose.pose.position.x = anchor1_data["distance"]
+                    msg.pose.pose.position.y = anchor2_data["distance"]
+                    
+                    # **orientation.w = anchor 1的角度, orientation.x = anchor 2的角度**
+                    msg.pose.pose.orientation.x = anchor1_data["angle"]
+                    msg.pose.pose.orientation.y = anchor2_data["angle"]
 
-                        # **设置角度 (w = 角度转换为弧度制)**
-                        msg.pose.pose.orientation.w = angle_rad
-
-                        pub.publish(msg)
-                        pub_count += 1
-                        if (time.time() -start_time) > 4:
-                            print(f"linktrack:Hz:{int(pub_count/4)},Updated data:{distance,int(angle_rad/3.14*180)}")
-                            start_time = time.time()
-                            pub_count = 0
-                    else:
-                        print("linktrack not falid")
-                    # rospy.loginfo(f"📡 发布数据: 距离={distance:.3f} m, 角度 (弧度)={angle_rad:.4f} rad")
+                    pub.publish(msg)
+                    pub_count += 1
+                    
+                    if (time.time() - start_time) > 4:
+                        print(f"linktrack:Hz:{int(pub_count/4)},Anchor1:dist={anchor1_data['distance']:.3f},angle={int(math.degrees(anchor1_data['angle']))},Anchor2:dist={anchor2_data['distance']:.3f},angle={int(math.degrees(anchor2_data['angle']))}")
+                        start_time = time.time()
+                        pub_count = 0
+                    
+                    # 清空数据，等待下一帧
+                    anchor1_data = None
+                    anchor2_data = None
 
     except serial.SerialException:
         rospy.logerr(f"❌ 无法打开串口 {SERIAL_PORT}，请检查连接")

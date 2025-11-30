@@ -31,7 +31,7 @@ class DroneMPC:
 
         self.w_theta = 0.1
     
-    def solve(self, x0, x_ref_traj , target_pos=None):
+    def solve(self, x0, x_ref_traj , target_pos=None, target_position=None, position_weight=0.0):
         x = cp.Variable((self.N+1, self.nx))
         u = cp.Variable((self.N, self.nu))
         cost = 0
@@ -54,7 +54,12 @@ class DroneMPC:
             dx = target_x - x[k, 0]  
             dy = target_y - x[k, 1] 
             directional_error = vy * dx - vx * dy  # 叉积形式（速度方向与目标方向垂直分量的平方）
-            cost += self.w_theta * cp.square(directional_error)  
+            cost += self.w_theta * cp.square(directional_error)
+            
+            # 位置约束：当前坐标与目标坐标的差的平方，乘以系数（只使用x和y）
+            if target_position is not None and position_weight > 0:
+                position_error_xy = x[k, 0:2] - target_position  # 只使用x和y
+                cost += position_weight * cp.sum_squares(position_error_xy)  
             constraints += [
                 x[k+1] == self.A @ x[k] + self.B @ u[k],
                 cp.abs(x[k, 3:6]) <= self.v_max,

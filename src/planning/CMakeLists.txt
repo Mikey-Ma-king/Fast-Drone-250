@@ -41,3 +41,11 @@ add_executable(planning
 target_link_libraries(planning
   ${catkin_LIBRARIES}
 )
+
+add_executable(dog_pos_processor
+  src/dog_pos_processor.cpp
+  )
+
+target_link_libraries(dog_pos_processor
+  ${catkin_LIBRARIES}
+)

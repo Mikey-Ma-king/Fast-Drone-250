@@ -131,15 +131,15 @@ double camera_offset = 0.37; // 关键参数
 const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)
 const double accel_dt = 0.01;  // 时间间隔 (s)
 
-double x_p = 0.3;
-double x_i = 0.83;
+double x_p = 0.15;
+double x_i = 0.5;
 double x_d = 0.0;
 double x_d_max = 0.12;
-double v_offset_x = 0.0;
+double v_offset_x = -0.2;
 double integral_limit_x = 1.0;
 
-double y_p = 0.3;
-double y_i = 0.83;
+double y_p = 0.15;
+double y_i = 0.5;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
@@ -151,13 +151,13 @@ double z_d = 0.0;
 double z_d_max = 0.1;
 double integral_limit_z = 0.1;
 
-double mpc_x_p = 0.3;
-double mpc_x_i = 0.83;
+double mpc_x_p = 0.15;
+double mpc_x_i = 0.5;
 double mpc_x_d = 0.0;
 double mpc_x_d_max = 0.12;
 
-double mpc_y_p = 0.3;
-double mpc_y_i = 0.83;
+double mpc_y_p = 0.15;
+double mpc_y_i = 0.5;
 double mpc_y_d = 0.0;
 double mpc_y_d_max = 0.12;
 
@@ -1000,8 +1000,8 @@ void cmdCallback(const ros::TimerEvent &e) {
   cmd.velocity.y += v_offset_x * sin(vins_yaw) + v_offset_y * cos(vins_yaw);
 
   // 做上下限限制
-  cmd.velocity.x = std::max(-1.2, std::min(1.2, cmd.velocity.x));
-  cmd.velocity.y = std::max(-1.2, std::min(1.2, cmd.velocity.y));
+  cmd.velocity.x = std::max(-1.5, std::min(1.5, cmd.velocity.x));
+  cmd.velocity.y = std::max(-1.5, std::min(1.5, cmd.velocity.y));
   cmd.velocity.z = std::max(-0.8, std::min(0.8, cmd.velocity.z));
 
   // 加速度限制：限制速度变化和位置变化
@@ -1184,13 +1184,37 @@ void mpc_callback(const ros::TimerEvent &event){
     return;
   }
   ros::Time now = ros::Time::now();
-  int raw_index = static_cast<int>(((now - traj_sub_time).toSec() + 0.1)/ 0.1);
-  int index_down = std::min(std::max(raw_index, 0), 15);
-  int index_up = std::min(std::max(raw_index + 1, 0), 15);
-  double weight_down = ((now - traj_sub_time).toSec() + 0.1)/ 0.1 - raw_index;
-  double weight_up = 1 - weight_down;
-  mpc_p = weight_down * trajectory_points[index_down] + weight_up * trajectory_points[index_up];
-  mpc_v = weight_down * trajectory_v_points[index_down] + weight_up * trajectory_v_points[index_up];
+  double dt = (now - traj_sub_time).toSec();
+  double dt_step = 0.1;  // 时间步长
+  
+  dt += 0.0;  // 提前取未来的点
+  
+  // 计算浮点索引
+  double idx_float = dt / dt_step;
+  
+  // 找到相邻的两个索引
+  int idx_down = static_cast<int>(std::floor(idx_float));
+  int idx_up = idx_down + 1;
+  
+  // 边界处理：限制在有效范围内
+  int max_idx = static_cast<int>(trajectory_points.size() - 1);
+  idx_down = std::max(0, std::min(idx_down, max_idx));
+  idx_up = std::max(0, std::min(idx_up, max_idx));
+  
+  // 如果超出范围，使用最后一个点
+  if (idx_down >= max_idx) {
+    mpc_p = trajectory_points[max_idx];
+    mpc_v = trajectory_v_points[max_idx];
+    return;
+  }
+  
+  // 计算权重：idx_float距离idx_down越近，weight_down越大
+  double weight_up = idx_float - idx_down;  // 距离下界的距离
+  double weight_down = 1.0 - weight_up;     // 距离上界的距离
+  
+  // 加权求和
+  mpc_p = weight_down * trajectory_points[idx_down] + weight_up * trajectory_points[idx_up];
+  mpc_v = weight_down * trajectory_v_points[idx_down] + weight_up * trajectory_v_points[idx_up];
 }
 
 void bppidCallback(const ros::TimerEvent &event) {

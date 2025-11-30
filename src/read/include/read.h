@@ -43,9 +43,9 @@
 
 using namespace cv;
 
-#define SIMULATE
-// # define SAVE_VIDEO
-// # define SCREEN_SHOW
+// #define SIMULATE
+# define SAVE_VIDEO
+# define SCREEN_SHOW
 // # define DELAY_TEST
 
 namespace image{
