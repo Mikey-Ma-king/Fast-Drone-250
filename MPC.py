@@ -466,7 +466,7 @@ def run_while_loop():
     global reset_mpc
 
     while not rospy.is_shutdown():
-        while triger != 1 or (dog_pos_received_ != 1 and target_received_ != 1):
+        while triger != 1 or dog_pos_received_ != 1:
             time.sleep(0.1)
         # 如果有起飞重置请求，则在主循环中清空轨迹和历史记录
         if reset_mpc == 1:
@@ -477,16 +477,10 @@ def run_while_loop():
             target_vel_history = []
             target_vel_history_times = []
             reset_mpc = 0
-        # Target选择逻辑：优先使用target_ekf_odom，其次使用dog_pos_processor位置
-        # 检查target_ekf_odom是否有近期反馈
-        if dog_pos_received_ == 1:
-            current_target_p = dog_pos_p.copy()
-            current_target_v = dog_pos_v.copy()
-            current_target_yaw = dog_pos_yaw
-        elif target_received_ == 1:
-            current_target_p = target_p.copy()
-            current_target_v = target_v.copy()
-            current_target_yaw = target_yaw
+        # Target选择逻辑：全部使用dog_pos_processor位置
+        current_target_p = dog_pos_p.copy()
+        current_target_v = dog_pos_v.copy()
+        current_target_yaw = dog_pos_yaw
 
         # 在狗位置基础上添加提前量：沿着vins到狗的方向延伸0.5m
         # dog_to_vins = current_target_p[:2] - vins_p[:2]  # 狗位置到vins位置的向量（2D）

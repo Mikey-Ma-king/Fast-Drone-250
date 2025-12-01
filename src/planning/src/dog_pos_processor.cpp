@@ -456,6 +456,8 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         
         // 自动进入预设模式
         initialized_ = true;  // 初始化完成
+        precise_pos_offset_ready_ = true;
+        precise_yaw_offset_ready_ = true;
     }
     
     // 处理hc14_dog数据：当同时收到target和hc14数据时，维护yaw和pos差值补偿；如果使用预设offset，则不进行迭代
@@ -743,6 +745,7 @@ void DogPosProcessor::publishProcessedDogPos() {
         final_dog_pos_.x() = target_dog_pos_.x() + camera_offset_ * final_dog_vel_.x();
         final_dog_pos_.y() = target_dog_pos_.y() + camera_offset_ * final_dog_vel_.y();
         final_dog_pos_.z() = target_dog_pos_.z();
+        final_dog_yaw_ = target_dog_yaw_;
     }
 
     // 卡尔曼滤波：只有pos收敛了才使用滤波器

@@ -125,21 +125,19 @@ double max_yaw_rate = 0.5;  // 最大偏航角速度限制 (rad/s)
 double yaw_rate_pos_gain = 0.0;  // 角速度前馈增益
 double yaw_rate_vel_gain = 0.0;  // 角速度前馈增益
 
-double camera_offset = 0.37; // 关键参数
-
 // 加速度限制参数
 const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)
 const double accel_dt = 0.01;  // 时间间隔 (s)
 
-double x_p = 0.15;
-double x_i = 0.5;
+double x_p = 0.3;
+double x_i = 0.83;
 double x_d = 0.0;
 double x_d_max = 0.12;
-double v_offset_x = -0.2;
+double v_offset_x = 0.0;
 double integral_limit_x = 1.0;
 
-double y_p = 0.15;
-double y_i = 0.5;
+double y_p = 0.3;
+double y_i = 0.83;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
@@ -151,13 +149,13 @@ double z_d = 0.0;
 double z_d_max = 0.1;
 double integral_limit_z = 0.1;
 
-double mpc_x_p = 0.15;
-double mpc_x_i = 0.5;
+double mpc_x_p = 0.3;
+double mpc_x_i = 0.83;
 double mpc_x_d = 0.0;
 double mpc_x_d_max = 0.12;
 
-double mpc_y_p = 0.15;
-double mpc_y_i = 0.5;
+double mpc_y_p = 0.3;
+double mpc_y_i = 0.83;
 double mpc_y_d = 0.0;
 double mpc_y_d_max = 0.12;
 
@@ -674,7 +672,7 @@ std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen
 
 
 void cmdCallback(const ros::TimerEvent &e) {
-  if (!hc14_dog_pos_received && !target_receive && !land_triger_received_)
+  if (!(hc14_dog_pos_received && hc14_offset_yaw_ready))
     return;
   if (!triger_received_)
     return;
@@ -704,11 +702,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   }
 
   // 目前mpc没有控制yaw，还使用目标的yaw
-  if (hc14_offset_yaw_ready && hc14_dog_pos_received) {
-    target_yaw = hc14_dog_yaw;
-  } else {
-    target_yaw = target_dog_yaw;
-  }
+  target_yaw = hc14_dog_yaw;
 
   angle_diff = target_yaw - vins_yaw;
   if (angle_diff > M_PI) {
@@ -726,55 +720,37 @@ void cmdCallback(const ros::TimerEvent &e) {
     targety = mpc_p.y();
     targetz = mpc_p.z();
 
-    error_targetx = targetx - vins_p.x();
-    error_targety = targety - vins_p.y();
-    error_targetz = targetz - vins_p.z();
-
   } else {
-    if (hc14_offset_yaw_ready && hc14_dog_pos_received) {
-      target_vx = hc14_dog_vel.x();
-      target_vy = hc14_dog_vel.y();
+    target_vx = hc14_dog_vel.x();
+    target_vy = hc14_dog_vel.y();
 
-      // 角速度前馈：在狗速度法向添加位置和速度补偿
-      double dog_vel_norm = std::sqrt(hc14_dog_vel.x() * hc14_dog_vel.x() + hc14_dog_vel.y() * hc14_dog_vel.y());
-      double compensation_pos = hc14_dog_yaw_rate * yaw_rate_pos_gain;
-      double compensation_vel = hc14_dog_yaw_rate * yaw_rate_vel_gain;
+    // 角速度前馈：在狗速度法向添加位置和速度补偿
+    double dog_vel_norm = std::sqrt(hc14_dog_vel.x() * hc14_dog_vel.x() + hc14_dog_vel.y() * hc14_dog_vel.y());
+    double compensation_pos = hc14_dog_yaw_rate * yaw_rate_pos_gain;
+    double compensation_vel = hc14_dog_yaw_rate * yaw_rate_vel_gain;
 
-      // 计算狗速度的法向单位向量（垂直方向）
-      double normal_x = 0.0, normal_y = 0.0;
-      if (dog_vel_norm > 0.001) {  // 避免除零
-        normal_x = -hc14_dog_vel.y() / dog_vel_norm;  // 法向向量（逆时针90度）
-        normal_y = hc14_dog_vel.x() / dog_vel_norm;
-      }
-      
-      // 计算位置补偿向量
-      double pos_compensation_x = normal_x * compensation_pos;
-      double pos_compensation_y = normal_y * compensation_pos;
-      
-      // 计算速度补偿向量（角速度越大，速度补偿越大）
-      double vel_compensation_x = normal_x * compensation_vel;
-      double vel_compensation_y = normal_y * compensation_vel;
-
-      // 应用补偿到目标位置和速度
-      if (hc14_offset_pos_ready && !target_receive) {
-        targetx = hc14_dog_pos.x();
-        targety = hc14_dog_pos.y();
-      } else {
-        targetx = target_p.x() + camera_offset * target_vx;
-        targety = target_p.y() + camera_offset * target_vy;
-      }
-      
-      targetx += pos_compensation_x;
-      targety += pos_compensation_y;
-      target_vx += vel_compensation_x;
-      target_vy += vel_compensation_y;      
-    } else {
-      target_vx = target_v.x();
-      target_vy = target_v.y();
-
-      targetx = target_p.x();
-      targety = target_p.y();
+    // 计算狗速度的法向单位向量（垂直方向）
+    double normal_x = 0.0, normal_y = 0.0;
+    if (dog_vel_norm > 0.001) {  // 避免除零
+      normal_x = -hc14_dog_vel.y() / dog_vel_norm;  // 法向向量（逆时针90度）
+      normal_y = hc14_dog_vel.x() / dog_vel_norm;
     }
+    
+    // 计算位置补偿向量
+    double pos_compensation_x = normal_x * compensation_pos;
+    double pos_compensation_y = normal_y * compensation_pos;
+    
+    // 计算速度补偿向量（角速度越大，速度补偿越大）
+    double vel_compensation_x = normal_x * compensation_vel;
+    double vel_compensation_y = normal_y * compensation_vel;
+
+    targetx = hc14_dog_pos.x();
+    targety = hc14_dog_pos.y();
+    
+    targetx += pos_compensation_x;
+    targety += pos_compensation_y;
+    target_vx += vel_compensation_x;
+    target_vy += vel_compensation_y;    
 
     if (!land_triger_received_)
     {
@@ -783,17 +759,17 @@ void cmdCallback(const ros::TimerEvent &e) {
     }
     else
     {
-      targetz = land_vins_z - 0.5 * (ros::Time::now() - land_triger_time).toSec();
-      target_vz = -0.5;
+      targetz = land_vins_z - 0.4 * (ros::Time::now() - land_triger_time).toSec();
+      target_vz = -0.4;
       // targetz = vins_p.z() - 0.4;
       // target_vz = target_v.z() - 0.08;
     }
 
-    error_targetx = targetx - vins_p.x();
-    error_targety = targety - vins_p.y();
-    error_targetz = targetz - vins_p.z();
-
   }
+
+  error_targetx = targetx - vins_p.x();
+  error_targety = targety - vins_p.y();
+  error_targetz = targetz - vins_p.z();
 
   if(last_error_targetx == 0){
     last_error_targetx = error_targetx;
@@ -944,19 +920,10 @@ void cmdCallback(const ros::TimerEvent &e) {
       }
 
       // Landing模式下的velocity前馈控制
-      if (hc14_offset_yaw_ready && hc14_dog_pos_received) {
-        // 基于dog_pos的velocity前馈                
-        target_lost_v.x() += (target_vx - last_target_v.x()) * 0.8;
-        target_lost_v.y() += (target_vy - last_target_v.y()) * 0.8;
-        cmd.velocity.x = target_lost_v.x();
-        cmd.velocity.y = target_lost_v.y();
-      } else {
-        // 如果没有dog_pos信息，使用原来的控制
-        double target_lost_time_gap = (ros::Time::now() - target_lost_time).toSec();
-        double target_lost_v_decay = exp(-1.0 * target_lost_time_gap / 10);
-        cmd.velocity.x = target_lost_v.x() * target_lost_v_decay;
-        cmd.velocity.y = target_lost_v.y() * target_lost_v_decay;
-      }
+      target_lost_v.x() += (target_vx - last_target_v.x()) * 0.8;
+      target_lost_v.y() += (target_vy - last_target_v.y()) * 0.8;
+      cmd.velocity.x = target_lost_v.x();
+      cmd.velocity.y = target_lost_v.y();
 
       target_lost_p.x() += cmd.velocity.x * accel_dt;
       target_lost_p.y() += cmd.velocity.y * accel_dt;
@@ -1021,7 +988,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     // 限制位置变化：不能超过限制后的速度 * dt
     Eigen::Vector3d pos_change = Eigen::Vector3d(cmd.position.x, cmd.position.y, cmd.position.z) - last_cmd_position;
     Eigen::Vector3d limited_vel(cmd.velocity.x, cmd.velocity.y, cmd.velocity.z);
-    double max_pos_change = limited_vel.norm() * accel_dt;
+    double max_pos_change = limited_vel.norm() * accel_dt * 1.5;
     
     if (max_pos_change > 0.001 && pos_change.norm() > max_pos_change) {
       pos_change = pos_change.normalized() * max_pos_change;

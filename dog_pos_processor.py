@@ -807,6 +807,7 @@ class DogPosProcessor:
             self.final_dog_pos[0] = self.target_dog_pos[0] + self.camera_offset * self.final_dog_vel[0]
             self.final_dog_pos[1] = self.target_dog_pos[1] + self.camera_offset * self.final_dog_vel[1]
             self.final_dog_pos[2] = self.target_dog_pos[2]
+            self.final_dog_yaw = self.target_dog_yaw
 
         # 卡尔曼滤波：只有pos收敛了才使用滤波器
         if self.kf_enabled and self.precise_pos_offset_ready:
