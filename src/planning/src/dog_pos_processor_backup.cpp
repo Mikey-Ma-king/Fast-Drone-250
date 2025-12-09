@@ -144,8 +144,10 @@ DogPosProcessor::DogPosProcessor()
       aoa_count_(0),
       last_aoa_count_(0),
       last_aoa_timer_(0),
-      aoa_distance_(0.0),
-      aoa_angle_(0.0),
+      aoa_anchor1_distance_(0.0),
+      aoa_anchor1_angle_(0.0),
+      aoa_anchor2_distance_(0.0),
+      aoa_anchor2_angle_(0.0),
       flow_z_(0.0),
       final_dog_pos_(Eigen::Vector3d::Zero()),
       final_dog_vel_(Eigen::Vector3d::Zero()),
@@ -172,8 +174,7 @@ DogPosProcessor::DogPosProcessor()
     pos_exceed_threshold_ = 0.3;  // 30cm，位置超限阈值
     pos_exceed_max_count_ = 5;  // 位置超限最大计数
     pos_filter_gain_ = 0.05;  // 位置滤波增益
-    aoa_pos_filter_gain_ = 0.05;  // AOA位置滤波增益（比pos_filter_gain小）
-    aoa_pos_step_limit_ = 0.01;   // AOA单次迭代上限（米）
+    aoa_pos_filter_gain_ = 0.01;  // AOA位置滤波增益（比pos_filter_gain小）
     
     // 前馈系数（参考traj_server.cpp）
     camera_offset_ = 0.37;  // 关键参数，与traj_server一致
@@ -467,7 +468,7 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
     
     // 处理hc14_dog数据：当同时收到target和hc14数据时，维护yaw和pos差值补偿；如果使用预设offset，则不进行迭代
     // 只有在初始化后且收到trigger后才进行offset迭代
-    if (target_receive_ && raw_dog_pos_received_ && vins_received_) {
+    if (target_receive_ && raw_dog_pos_received_) {
         // 正常的yaw offset迭代逻辑
         double current_yaw_offset = normalizeAngle(raw_dog_yaw_ - target_dog_yaw_);
         double yaw_offset_diff = normalizeAngle(current_yaw_offset - yaw_offset_);
@@ -564,58 +565,141 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         }
     }
     
-    // 维护AOA位置偏移（单距离单角度方案）
-    // 前提：yaw ready、vins可用、aoa可用，且飞机朝向与当前处理后狗位姿夹角在±30度内
+    // 维护AOA位置偏移（在具备vins、AOA数据和yaw ready时）
+    // 前提条件：yaw ready，然后根据两个anchor的距离和dog朝向进行三角定位
     if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_) {
-        // 角度限制：飞机朝向需面向当前processed dog pos的±30度
-        Eigen::Vector3d dog_vec = final_dog_pos_ - vins_pos_;
-        double heading_to_dog = std::atan2(dog_vec.y(), dog_vec.x());
-        double heading_diff = normalizeAngle(heading_to_dog - vins_yaw_);
-        if (std::abs(heading_diff) > M_PI / 6.0) {  // 30度
+        // 三角定位：设飞机在原点(0,0)，求解狗头和狗尾相对于飞机的坐标
+        // 使用raw_dog_yaw减去yaw_offset得到dog在世界坐标系中的yaw
+        double dog_yaw = normalizeAngle(raw_dog_yaw_ - yaw_offset_);
+        double cos_yaw = std::cos(dog_yaw);
+        double sin_yaw = std::sin(dog_yaw);
+        
+        // 计算狗头到狗尾的向量（在世界坐标系中）
+        // 在dog坐标系中：狗头在(0.3, 0)，狗尾在(-0.3, 0)
+        // 狗头到狗尾的向量：(-0.6, 0)
+        // 旋转到世界坐标系：offset = R(yaw) * (-0.6, 0) = (-0.6*cos, -0.6*sin)
+        double offset_x = cos_yaw * aoa_anchor_separation_;   // 狗头到狗尾的x分量
+        double offset_y = sin_yaw * aoa_anchor_separation_;   // 狗头到狗尾的y分量
+        
+        double d1 = aoa_anchor1_distance_;  // 狗头到飞机的距离
+        double d2 = aoa_anchor2_distance_;  // 狗尾到飞机的距离
+        
+        // 设狗头坐标为(x1, y1)，狗尾坐标为(x2, y2)，飞机在(0, 0)
+        // 约束条件：
+        // 1. x1^2 + y1^2 = d1^2  (狗头到飞机的距离)
+        // 2. x2^2 + y2^2 = d2^2  (狗尾到飞机的距离)
+        // 3. (x1, y1) - (x2, y2) = (offset_x, offset_y)  (狗头到狗尾的向量)
+        //
+        // 从约束3：x2 = x1 - offset_x, y2 = y1 - offset_y
+        // 代入约束2：(x1 - offset_x)^2 + (y1 - offset_y)^2 = d2^2
+        // 展开：x1^2 - 2*x1*offset_x + offset_x^2 + y1^2 - 2*y1*offset_y + offset_y^2 = d2^2
+        // 利用约束1：d1^2 - 2*(x1*offset_x + y1*offset_y) + (offset_x^2 + offset_y^2) = d2^2
+        // 得到线性约束：x1*offset_x + y1*offset_y = (d1^2 - d2^2 + offset_norm^2) / 2
+        
+        // 线性约束：x1*offset_x + y1*offset_y = const
+        double offset_norm_sq = aoa_anchor_separation_ * aoa_anchor_separation_;  // 等于anchor_sep^2
+        double linear_const = (d1 * d1 - d2 * d2 + offset_norm_sq) / 2.0;
+        
+        // 结合圆的方程 x1^2 + y1^2 = d1^2 求解
+        // 设 x1 = a*offset_x - b*offset_y, y1 = a*offset_y + b*offset_x
+        // 代入线性约束：x1*offset_x + y1*offset_y = a*(offset_x^2 + offset_y^2) = a*offset_norm_sq = linear_const
+        // 所以 a = linear_const / offset_norm_sq
+        
+        double a = linear_const / offset_norm_sq;
+        
+        // 代入圆的方程：x1^2 + y1^2 = a^2*offset_norm_sq + b^2*offset_norm_sq = d1^2
+        // 所以 b^2 = (d1^2 - a^2*offset_norm_sq) / offset_norm_sq
+        double b_sq = (d1 * d1 - a * a * offset_norm_sq) / offset_norm_sq;
+        if (b_sq < 0) {
             return;
         }
-
-        // 利用单个距离和相对角度估计狗的世界坐标
-        double global_yaw_to_dog = normalizeAngle(vins_yaw_ + aoa_angle_);
-        Eigen::Vector3d aoa_pos_world(
-            vins_pos_.x() + aoa_distance_ * std::cos(global_yaw_to_dog),
-            vins_pos_.y() + aoa_distance_ * std::sin(global_yaw_to_dog),
+        
+        double b = std::sqrt(b_sq);
+        
+        // 两个解
+        double x1_1 = a * offset_x - b * offset_y;
+        double y1_1 = a * offset_y + b * offset_x;
+        double x1_2 = a * offset_x + b * offset_y;
+        double y1_2 = a * offset_y - b * offset_x;
+        
+        // 计算对应的狗尾坐标
+        double x2_1 = x1_1 - offset_x;
+        double y2_1 = y1_1 - offset_y;
+        double x2_2 = x1_2 - offset_x;
+        double y2_2 = y1_2 - offset_y;
+        
+        // 对两个解分别计算狗中心和pos offset，选择pos offset更小的
+        // 解1：狗中心
+        double dog_center_x_1 = (x1_1 + x2_1) / 2.0;
+        double dog_center_y_1 = (y1_1 + y2_1) / 2.0;
+        Eigen::Vector3d dog_center_1(
+            vins_pos_.x() + dog_center_x_1,
+            vins_pos_.y() + dog_center_y_1,
             vins_pos_.z()
         );
-
-        // 将AOA估计位置旋转到狗坐标系（使用 yaw_offset_）
-        double cos_yaw = std::cos(yaw_offset_);
-        double sin_yaw = std::sin(yaw_offset_);
-        double rotated_aoa_x = cos_yaw * (aoa_pos_world.x() - vins_pos_.x()) - sin_yaw * (aoa_pos_world.y() - vins_pos_.y());
-        double rotated_aoa_y = sin_yaw * (aoa_pos_world.x() - vins_pos_.x()) + cos_yaw * (aoa_pos_world.y() - vins_pos_.y());
-        Eigen::Vector3d rotated_aoa_pos(rotated_aoa_x, rotated_aoa_y, aoa_pos_world.z());
-
-        // 与raw_dog_pos比较，更新pos_offset_
+        
+        // 解2：狗中心
+        double dog_center_x_2 = (x1_2 + x2_2) / 2.0;
+        double dog_center_y_2 = (y1_2 + y2_2) / 2.0;
+        Eigen::Vector3d dog_center_2(
+            vins_pos_.x() + dog_center_x_2,
+            vins_pos_.y() + dog_center_y_2,
+            vins_pos_.z()
+        );
+        
+        // 计算当前pos offset
         Eigen::Vector3d raw_dog_pos(
             raw_dog_pos_->pose.pose.position.x,
             raw_dog_pos_->pose.pose.position.y,
             raw_dog_pos_->pose.pose.position.z
         );
-        Eigen::Vector3d current_pos_offset = raw_dog_pos - rotated_aoa_pos;
-
-        // Debug发布AOA估计位置
+        
+        // 将aoa_dog_pos旋转到狗坐标系
+        double cos_yaw_offset = std::cos(yaw_offset_);
+        double sin_yaw_offset = std::sin(yaw_offset_);
+        
+        // 解1的pos offset
+        double rotated_aoa_x_1 = cos_yaw_offset * (dog_center_1.x() - vins_pos_.x()) - sin_yaw_offset * (dog_center_1.y() - vins_pos_.y());
+        double rotated_aoa_y_1 = sin_yaw_offset * (dog_center_1.x() - vins_pos_.x()) + cos_yaw_offset * (dog_center_1.y() - vins_pos_.y());
+        Eigen::Vector3d rotated_aoa_pos_1(rotated_aoa_x_1, rotated_aoa_y_1, dog_center_1.z());
+        Eigen::Vector3d current_pos_offset_1 = raw_dog_pos - rotated_aoa_pos_1;
+        double pos_offset_norm_1 = current_pos_offset_1.norm();
+        
+        // 解2的pos offset
+        double rotated_aoa_x_2 = cos_yaw_offset * (dog_center_2.x() - vins_pos_.x()) - sin_yaw_offset * (dog_center_2.y() - vins_pos_.y());
+        double rotated_aoa_y_2 = sin_yaw_offset * (dog_center_2.x() - vins_pos_.x()) + cos_yaw_offset * (dog_center_2.y() - vins_pos_.y());
+        Eigen::Vector3d rotated_aoa_pos_2(rotated_aoa_x_2, rotated_aoa_y_2, dog_center_2.z());
+        Eigen::Vector3d current_pos_offset_2 = raw_dog_pos - rotated_aoa_pos_2;
+        double pos_offset_norm_2 = current_pos_offset_2.norm();
+        
+        // 选择pos offset更小的解
+        Eigen::Vector3d current_pos_offset;
+        Eigen::Vector3d selected_aoa_dog_pos;
+        if (pos_offset_norm_1 < pos_offset_norm_2) {
+            current_pos_offset = current_pos_offset_1;
+            selected_aoa_dog_pos = dog_center_1;
+        } else {
+            current_pos_offset = current_pos_offset_2;
+            selected_aoa_dog_pos = dog_center_2;
+        }
+        
+        // 发布AOA计算得到的dog位置（debug）
         nav_msgs::Odometry aoa_debug_msg;
         aoa_debug_msg.header.stamp = ros::Time::now();
         aoa_debug_msg.header.frame_id = "world";
-        aoa_debug_msg.pose.pose.position.x = aoa_pos_world.x();
-        aoa_debug_msg.pose.pose.position.y = aoa_pos_world.y();
-        aoa_debug_msg.pose.pose.position.z = aoa_pos_world.z();
+        aoa_debug_msg.pose.pose.position.x = selected_aoa_dog_pos.x();
+        aoa_debug_msg.pose.pose.position.y = selected_aoa_dog_pos.y();
+        aoa_debug_msg.pose.pose.position.z = selected_aoa_dog_pos.z();
         aoa_dog_pos_debug_pub_.publish(aoa_debug_msg);
-
-        // 位置偏移滤波
+        
+        // 对位置偏移进行线性滤波，防止突变（使用AOA专用的滤波增益）
+        // 归一化更新量，防止一次改变过大
         Eigen::Vector3d pos_offset_diff = current_pos_offset - pos_offset_;
-        double diff_norm = pos_offset_diff.norm();
-        if (diff_norm > 1e-6) {
-            // 按比例逼近，单次步长上限 aoa_pos_step_limit_
-            double step = aoa_pos_filter_gain_ * diff_norm;
-            step = std::min(step, aoa_pos_step_limit_);
-            pos_offset_ += pos_offset_diff * (step / diff_norm);
-        }
+        
+        // 归一化到单位向量，然后乘以滤波增益
+        double pos_offset_diff_norm = std::max(pos_offset_diff.norm(), 0.01);  // 避免除零
+        Eigen::Vector3d pos_offset_diff_normalized = pos_offset_diff / pos_offset_diff_norm;
+        pos_offset_ += aoa_pos_filter_gain_ * pos_offset_diff_normalized;
     }
 }
 
@@ -742,21 +826,55 @@ void DogPosProcessor::publishProcessedDogPos() {
 }
 
 void DogPosProcessor::aoaCallback(const nav_msgs::Odometry::ConstPtr& msg) {
-    // 单距离 + 单角度：position.x = 距离，orientation.x = 相对于无人机朝向的角度
-    double distance_raw = msg->pose.pose.position.x;
-    double angle_raw = msg->pose.pose.orientation.x;
+    // 从新的消息格式中读取两个anchor的数据
+    // position.x = anchor 1的距离, position.y = anchor 2的距离
+    // orientation.x = anchor 1的角度, orientation.y = anchor 2的角度
+    double anchor1_distance_raw = msg->pose.pose.position.x;
+    double anchor2_distance_raw = msg->pose.pose.position.y;
+    double anchor1_angle_raw = msg->pose.pose.orientation.x;
+    double anchor2_angle_raw = msg->pose.pose.orientation.y;
     
-    // 检查距离有效性
-    if (distance_raw < aoa_min_distance_) {
+    // 检查数据有效性
+    if (anchor1_distance_raw < aoa_min_distance_ || anchor2_distance_raw < aoa_min_distance_) {
         return;
     }
 
     // 用光流高度修正：水平距离 = sqrt(max(0, d^2 - h^2))
     double height = (flow_z_ - flow_height_bias_);
-    double d_sq = std::max(0.0, distance_raw * distance_raw - height * height);
-    aoa_distance_ = std::sqrt(d_sq);
-
-    aoa_angle_ = angle_raw;
+    
+    // 修正anchor 1的距离
+    double d1_2 = std::max(0.0, anchor1_distance_raw * anchor1_distance_raw - height * height);
+    aoa_anchor1_distance_ = std::sqrt(d1_2);
+    
+    // 修正anchor 2的距离
+    double d2_2 = std::max(0.0, anchor2_distance_raw * anchor2_distance_raw - height * height);
+    aoa_anchor2_distance_ = std::sqrt(d2_2);
+    
+    // 如果两个anchor距离的差太小，直接返回，不更新
+    double distance_diff = std::abs(aoa_anchor1_distance_ - aoa_anchor2_distance_);
+    if (distance_diff < aoa_min_distance_diff_) {
+        return;
+    }
+    
+    // 如果两个anchor距离的差超过aoa_anchor_separation，重新从中心开始把差变成这个值
+    if (distance_diff > aoa_anchor_separation_) {
+        // 计算中心距离
+        double center_distance = (aoa_anchor1_distance_ + aoa_anchor2_distance_) / 2.0;
+        // 将差值限制为aoa_anchor_separation
+        double half_separation = aoa_anchor_separation_ / 2.0;
+        if (aoa_anchor1_distance_ > aoa_anchor2_distance_) {
+            aoa_anchor1_distance_ = center_distance + half_separation;
+            aoa_anchor2_distance_ = center_distance - half_separation;
+        } else {
+            aoa_anchor1_distance_ = center_distance - half_separation;
+            aoa_anchor2_distance_ = center_distance + half_separation;
+        }
+    }
+    
+    // 存储角度
+    aoa_anchor1_angle_ = anchor1_angle_raw;
+    aoa_anchor2_angle_ = anchor2_angle_raw;
+    
     aoa_count_++;
 }
 

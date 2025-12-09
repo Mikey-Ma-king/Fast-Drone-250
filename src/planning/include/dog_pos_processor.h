@@ -88,6 +88,7 @@ private:
     int pos_exceed_max_count_;
     double pos_filter_gain_;
     double aoa_pos_filter_gain_;  // AOA位置滤波增益（比pos_filter_gain小）
+    double aoa_pos_step_limit_;   // AOA位置偏移单次迭代上限（米）
     double camera_offset_;
     double aoa_min_distance_;
     double aoa_min_distance_diff_;  // 两个anchor距离差的最小值，小于此值则认为距离差太小，不更新
@@ -128,16 +129,19 @@ private:
     unsigned int target_count_;
     unsigned int last_target_count_;
     int last_target_timer_;
-    
+    int last_target_loss_timer_;
+    unsigned int last_target_loss_count_;
     // AOA数据
     bool aoa_received_;
     unsigned int aoa_count_;
     unsigned int last_aoa_count_;
     int last_aoa_timer_;
-    double aoa_anchor1_distance_;
-    double aoa_anchor1_angle_;
-    double aoa_anchor2_distance_;
-    double aoa_anchor2_angle_;
+    // double aoa_anchor1_distance_;
+    // double aoa_anchor1_angle_;
+    // double aoa_anchor2_distance_;
+    // double aoa_anchor2_angle_;
+    double aoa_distance_;   // 单anchor距离（已做高度修正）
+    double aoa_angle_;      // 相对无人机朝向的角度
     
     // 光流数据
     double flow_z_;

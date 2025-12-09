@@ -206,6 +206,7 @@ class all_Subscriber:
 
     def track_cb(self, msg):
         global triger, target_received_, dog_pos_received_
+        global land_triger
         triger = 1
         target_received_ = 0
         dog_pos_received_ = 0
@@ -220,6 +221,7 @@ class all_Subscriber:
             dog_pos_received_ = 0
             triger = 0
             reset_mpc = 1
+            land_triger = 0
 
 class TrajectoryVisualizer:
     def __init__(self, frame_id="world"):
@@ -231,7 +233,7 @@ class TrajectoryVisualizer:
         self.frame_id = frame_id
         self.publishers = {}  # 存储发布器 {topic_name: publisher}
 
-    def visualize_traj(self, position_array, dt, topic="traj"):
+    def visualize_traj(self, position_array, acceleration_array, dt, topic="traj"):
         """
         发布轨迹到 RViz
         参数:
@@ -242,8 +244,10 @@ class TrajectoryVisualizer:
         # 1. 发布路径消息
         path_msg = self._build_path_msg(position_array)
         path_v_msg = self._build_path_v_msg(position_array)
+        path_a_msg = self._build_path_a_msg(acceleration_array)
         self._get_publisher(topic, Path).publish(path_msg)
         self._get_publisher("/traj_v", Path).publish(path_v_msg)
+        self._get_publisher("/traj_a", Path).publish(path_a_msg)
         
         # 2. 发布路点消息
         waypoints_msg = self._build_waypoints_msg(position_array)
@@ -281,6 +285,23 @@ class TrajectoryVisualizer:
         
         return path
 
+    def _build_path_a_msg(self, positions):
+        """构建 nav_msgs/Path 消息（加速度）"""
+        path = Path()
+        path.header = Header(frame_id=self.frame_id, stamp=rospy.Time.now())
+        
+        # 遍历加速度点（如果 position_array 包含加速度信息）
+        # 假设 position_array 形状为 (N, 9)，包含 [x, y, z, vx, vy, vz, ax, ay, az]
+        for pt in positions:
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x = pt[0]
+            pose.pose.position.y = pt[1]
+            pose.pose.position.z = pt[2]
+            path.poses.append(pose)
+        
+        return path
+
     def _build_waypoints_msg(self, positions):
         """构建 sensor_msgs/PointCloud2 消息"""
         cloud = PointCloud2()
@@ -312,7 +333,7 @@ class TrajectoryVisualizer:
             self.publishers[topic] = rospy.Publisher(topic, msg_type, queue_size=10)
         return self.publishers[topic]
 
-def predict_target_trajectory(pos, vel, N, dt, target_yaw, direct_predict=True, ave_num=1, shift=0.2):
+def predict_target_trajectory(pos, vel, N, dt, target_yaw, direct_predict=False, ave_num=5, shift=0.0):
     """
     生成移动平台的参考轨迹
     根据 direct_predict 参数选择：
@@ -407,23 +428,23 @@ def traj_get_state(x_opt, u_opt, future_time, dt):
     
     return state, accel
 
-def merge_trajectory(old_x_opt, new_x_opt, now,shift, mpc_N, dt):
+def merge_trajectory(old_x_opt, new_x_opt, old_u_opt, new_u_opt, now,shift, mpc_N, dt):
     shift_idx = int((shift + now) / dt)
     now_idx = int(now / dt)
 
     x_head = old_x_opt[now_idx:shift_idx] if old_x_opt is not None and len(old_x_opt) > shift_idx else np.empty((0, new_x_opt.shape[1]))
-    # u_head = old_u_opt[now_idx:shift_idx] if old_u_opt is not None and len(old_u_opt) > shift_idx else np.empty((0, new_u_opt.shape[1]))
+    u_head = old_u_opt[now_idx:shift_idx] if old_u_opt is not None and len(old_u_opt) > shift_idx else np.empty((0, new_u_opt.shape[1]))
 
     remain_x = 1 + mpc_N - x_head.shape[0]
-    # remain_u = mpc_N - u_head.shape[0]
+    remain_u = mpc_N - u_head.shape[0]
 
     x_tail = new_x_opt[:remain_x]
-    # u_tail = new_u_opt[:remain_u]
+    u_tail = new_u_opt[:remain_u]
 
     x_opt = np.concatenate((x_head, x_tail), axis=0)
-    # u_opt = np.concatenate((u_head, u_tail), axis=0)
+    u_opt = np.concatenate((u_head, u_tail), axis=0)
 
-    return x_opt
+    return x_opt, u_opt
 
 # 初始化
 rospy.init_node('MPC_publisher', anonymous=True)
@@ -435,9 +456,12 @@ vis = TrajectoryVisualizer()
 pos_cmd_pub = rospy.Publisher('/position_cmd', PositionCommand, queue_size=1)
 stop_triger_pub = rospy.Publisher('/stop_triger', PoseStamped, queue_size=1)
 mpc = DroneMPC(N = 15)
+# mpc.v_max = np.array([2.0, 2.0, 0.8])  # 速度限制
+# mpc.a_max = np.array([1.3, 1.3, 0.6])  # 加速度限制
+# mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
 mpc.v_max = np.array([1.2, 1.2, 0.8])  # 速度限制
 mpc.a_max = np.array([1.0, 1.0, 0.6])  # 加速度限制
-mpc.Q = np.diag([10, 10, 20, 7, 7, 5])  # 位置权重
+mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
 # drone_state = np.array([0, 0, 0.4, 0, 0, 0])  # 初始状态 [px,py,pz,vx,vy,vz]
 rate = rospy.Rate(80)
 MPC_clcyle = time.time() - 10
@@ -450,6 +474,10 @@ last_target_p_dis = None
 last_last_target_p_dis = None
 tracking_dist = 1.25
 shift = 0.2
+shift_dog = 0.23
+
+# 仿真模式参数：如果为True，直接使用target_p和target_v，否则使用dog_pos_p和dog_pos_v
+SIMULATE_MODE = False  # 默认False，从ROS参数获取，如果没有则使用False
 
 
 def run_while_loop():
@@ -464,10 +492,17 @@ def run_while_loop():
     global aoa_fast_v_max, aoa_slow_v_max
     global triger
     global reset_mpc
+    global land_triger, target_received_
+    global SIMULATE_MODE
 
     while not rospy.is_shutdown():
-        while triger != 1 or dog_pos_received_ != 1:
-            time.sleep(0.1)
+        # 等待条件：仿真模式下只需要triger，正常模式需要triger和dog_pos_received_
+        if SIMULATE_MODE:
+            while triger != 1 or target_received_ != 1:
+                time.sleep(0.1)
+        else:
+            while triger != 1 or dog_pos_received_ != 1:
+                time.sleep(0.1)
         # 如果有起飞重置请求，则在主循环中清空轨迹和历史记录
         if reset_mpc == 1:
             x_opt = None
@@ -477,10 +512,17 @@ def run_while_loop():
             target_vel_history = []
             target_vel_history_times = []
             reset_mpc = 0
-        # Target选择逻辑：全部使用dog_pos_processor位置
-        current_target_p = dog_pos_p.copy()
-        current_target_v = dog_pos_v.copy()
-        current_target_yaw = dog_pos_yaw
+        # Target选择逻辑：根据仿真模式选择使用target_p/target_v或dog_pos_p/dog_pos_v
+        if SIMULATE_MODE:
+            # 仿真模式：直接使用target_p和target_v
+            current_target_p = target_p.copy()
+            current_target_v = target_v.copy()
+            current_target_yaw = target_yaw
+        else:
+            # 正常模式：使用dog_pos_processor位置
+            current_target_p = dog_pos_p.copy()
+            current_target_v = dog_pos_v.copy()
+            current_target_yaw = dog_pos_yaw
 
         # 在狗位置基础上添加提前量：沿着vins到狗的方向延伸0.5m
         # dog_to_vins = current_target_p[:2] - vins_p[:2]  # 狗位置到vins位置的向量（2D）
@@ -522,12 +564,13 @@ def run_while_loop():
         #     target_p_dis = 0.3*last_last_target_p_dis + 0.4*last_target_p_dis + 0.3*target_p_dis
         #     last_last_target_p_dis = last_target_p_dis
         #     last_target_p_dis = target_p_dis
-        max_dis = 1.2
-        if (abs(target_p_dis[0] - vins_p[0]) > max_dis) : 
-            target_p_dis[0] = max_dis*(target_p_dis[0] - vins_p[0])/abs(target_p_dis[0] - vins_p[0]) + vins_p[0]
-        if (abs(target_p_dis[1] - vins_p[1]) > max_dis) :
-            target_p_dis[1] = max_dis*(target_p_dis[1] - vins_p[1])/abs(target_p_dis[1] - vins_p[1]) + vins_p[1]
-        target_traj = predict_target_trajectory(target_p_dis, current_target_v, mpc.N, mpc.dt , current_target_yaw)
+
+        # max_dis = 1.2
+        # if (abs(target_p_dis[0] - vins_p[0]) > max_dis) : 
+        #     target_p_dis[0] = max_dis*(target_p_dis[0] - vins_p[0])/abs(target_p_dis[0] - vins_p[0]) + vins_p[0]
+        # if (abs(target_p_dis[1] - vins_p[1]) > max_dis) :
+        #     target_p_dis[1] = max_dis*(target_p_dis[1] - vins_p[1])/abs(target_p_dis[1] - vins_p[1]) + vins_p[1]
+        target_traj = predict_target_trajectory(target_p_dis, current_target_v, mpc.N, mpc.dt , current_target_yaw, shift=shift_dog)
         
         # # 位置约束逻辑：根据target_received_和land_triger决定是否添加位置约束
         # # 目标坐标只使用x和y，不使用z
@@ -561,12 +604,12 @@ def run_while_loop():
             print("MPC solver failed to find a solution.")
             continue
 
-        x_opt = merge_trajectory(x_opt, new_x_opt, now=time.time() - MPC_clcyle ,shift=shift, mpc_N=mpc.N, dt=mpc.dt)
+        x_opt, u_opt = merge_trajectory(x_opt, new_x_opt, u_opt, new_u_opt, now=time.time() - MPC_clcyle ,shift=shift, mpc_N=mpc.N, dt=mpc.dt)
         # x_opt = new_x_opt
-        u_opt = new_u_opt
+        # u_opt = new_u_opt
         MPC_clcyle = time.time() 
         time.sleep(0.2)
-        vis.visualize_traj(x_opt, mpc.dt, topic="/drone2/planning/traj")
+        vis.visualize_traj(x_opt, u_opt, mpc.dt, topic="/drone2/planning/traj")
 
 last_p_v = None
 last_accel = None

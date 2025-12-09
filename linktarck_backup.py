@@ -192,69 +192,41 @@ def main():
                     distance = anchor["distance_m"]
                     angle_rad = anchor["angle_rad"]
                     
-                    # if anchor["sending_flag"]:
-                    #     if anchor_id == 1:
-                    #         # 简单线性滤波
-                    #         if anchor1_distance_filtered is None:
-                    #             anchor1_distance_filtered = distance
-                    #         else:
-                    #             anchor1_distance_filtered = (1.0 - filter_gain) * anchor1_distance_filtered + filter_gain * distance
-                    #         anchor1_data = {"distance": anchor1_distance_filtered, "angle": angle_rad}
-                    #     elif anchor_id == 2:
-                    #         # 简单线性滤波
-                    #         if anchor2_distance_filtered is None:
-                    #             anchor2_distance_filtered = distance
-                    #         else:
-                    #             anchor2_distance_filtered = (1.0 - filter_gain) * anchor2_distance_filtered + filter_gain * distance
-                    #         anchor2_data = {"distance": anchor2_distance_filtered, "angle": angle_rad}
+                    if anchor["sending_flag"]:
+                        if anchor_id == 1:
+                            # 简单线性滤波
+                            if anchor1_distance_filtered is None:
+                                anchor1_distance_filtered = distance
+                            else:
+                                anchor1_distance_filtered = (1.0 - filter_gain) * anchor1_distance_filtered + filter_gain * distance
+                            anchor1_data = {"distance": anchor1_distance_filtered, "angle": angle_rad}
+                        elif anchor_id == 2:
+                            # 简单线性滤波
+                            if anchor2_distance_filtered is None:
+                                anchor2_distance_filtered = distance
+                            else:
+                                anchor2_distance_filtered = (1.0 - filter_gain) * anchor2_distance_filtered + filter_gain * distance
+                            anchor2_data = {"distance": anchor2_distance_filtered, "angle": angle_rad}
                 
                 # 当两个anchor的数据都准备好时，发布一个消息
-                # if anchor1_data is not None and anchor2_data is not None:
-                #     msg = Odometry()
-                #     msg.header.stamp = rospy.Time.now()
-                #     msg.header.frame_id = "aoa_tag"
-
-                #     # **position.x = anchor 1的距离, position.y = anchor 2的距离**
-                #     msg.pose.pose.position.x = anchor1_data["distance"]
-                #     msg.pose.pose.position.y = anchor2_data["distance"]
-                    
-                #     # **orientation.w = anchor 1的角度, orientation.x = anchor 2的角度**
-                #     msg.pose.pose.orientation.x = anchor1_data["angle"]
-                #     msg.pose.pose.orientation.y = anchor2_data["angle"]
-
-                #     pub.publish(msg)
-                #     pub_count += 1
-                    
-                #     if (time.time() - start_time) > 4:
-                #         print(f"linktrack:Hz:{int(pub_count/4)},Anchor1:dist={anchor1_data['distance']:.3f},angle={int(math.degrees(anchor1_data['angle']))},Anchor2:dist={anchor2_data['distance']:.3f},angle={int(math.degrees(anchor2_data['angle']))}")
-                #         start_time = time.time()
-                #         pub_count = 0
-                    
-                #     # 清空数据，等待下一帧
-                #     anchor1_data = None
-                #     anchor2_data = None
-                    if anchor["sending_flag"]:
-                        if anchor1_distance_filtered is None:
-                            anchor1_distance_filtered = distance
-                        else:
-                            anchor1_distance_filtered = (1.0 - filter_gain) * anchor1_distance_filtered + filter_gain * distance
-                        anchor1_data = {"distance": anchor1_distance_filtered, "angle": angle_rad}
-                if anchor1_data is not None:
+                if anchor1_data is not None and anchor2_data is not None:
                     msg = Odometry()
                     msg.header.stamp = rospy.Time.now()
                     msg.header.frame_id = "aoa_tag"
 
                     # **position.x = anchor 1的距离, position.y = anchor 2的距离**
                     msg.pose.pose.position.x = anchor1_data["distance"]
+                    msg.pose.pose.position.y = anchor2_data["distance"]
                     
                     # **orientation.w = anchor 1的角度, orientation.x = anchor 2的角度**
                     msg.pose.pose.orientation.x = anchor1_data["angle"]
+                    msg.pose.pose.orientation.y = anchor2_data["angle"]
 
                     pub.publish(msg)
                     pub_count += 1
                     
                     if (time.time() - start_time) > 4:
-                        print(f"linktrack:Hz:{int(pub_count/4)},Anchor1:dist={anchor1_data['distance']:.3f},angle={int(math.degrees(anchor1_data['angle']))}")
+                        print(f"linktrack:Hz:{int(pub_count/4)},Anchor1:dist={anchor1_data['distance']:.3f},angle={int(math.degrees(anchor1_data['angle']))},Anchor2:dist={anchor2_data['distance']:.3f},angle={int(math.degrees(anchor2_data['angle']))}")
                         start_time = time.time()
                         pub_count = 0
                     

@@ -61,6 +61,8 @@ unsigned int target_count = 0;
 unsigned int last_target_count = 0;
 unsigned int last_precise_target_count = 0;
 bool target_receive = false;
+int last_target_loss_timer = 0;
+unsigned int last_target_loss_count = 0;
 
 // dog_pos 相关变量（只保留速度信息）
 bool hc14_dog_pos_received = false;
@@ -126,36 +128,36 @@ double yaw_rate_pos_gain = 0.0;  // 角速度前馈增益
 double yaw_rate_vel_gain = 0.0;  // 角速度前馈增益
 
 // 加速度限制参数
-const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)
+const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)1.3
 const double accel_dt = 0.01;  // 时间间隔 (s)
 
-double x_p = 0.3;
+double x_p = 0.2;
 double x_i = 0.83;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = 0.0;
 double integral_limit_x = 1.0;
 
-double y_p = 0.3;
+double y_p = 0.2;
 double y_i = 0.83;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
 double integral_limit_y = 1.0;
 
-double z_p = 0.3;
+double z_p = 0.25;
 double z_i = 0.0;
 double z_d = 0.0;
 double z_d_max = 0.1;
 double integral_limit_z = 0.1;
 
 double mpc_x_p = 0.3;
-double mpc_x_i = 0.83;
+double mpc_x_i = 0.85;
 double mpc_x_d = 0.0;
 double mpc_x_d_max = 0.12;
 
 double mpc_y_p = 0.3;
-double mpc_y_i = 0.83;
+double mpc_y_i = 0.85;
 double mpc_y_d = 0.0;
 double mpc_y_d_max = 0.12;
 
@@ -203,8 +205,9 @@ bool traj_initialized = false;
 double traj_dt = 0.2;
 std::vector<Eigen::Vector3d> trajectory_points;
 std::vector<Eigen::Vector3d> trajectory_v_points;
+std::vector<Eigen::Vector3d> trajectory_a_points;
 
-Eigen::Vector3d mpc_p{0,0,0},mpc_v{0,0,0};
+Eigen::Vector3d mpc_p{0,0,0},mpc_v{0,0,0},mpc_a{0,0,0};
 
 int BPNN_count = 60;
 ros::Time traj_sub_time;
@@ -672,8 +675,8 @@ std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen
 
 
 void cmdCallback(const ros::TimerEvent &e) {
-  if (!(hc14_dog_pos_received && hc14_offset_yaw_ready))
-    return;
+  // if (!(hc14_dog_pos_received && hc14_offset_yaw_ready))
+  //   return;
   if (!triger_received_)
     return;
   if (stop_triger_received_)
@@ -920,8 +923,8 @@ void cmdCallback(const ros::TimerEvent &e) {
       }
 
       // Landing模式下的velocity前馈控制
-      target_lost_v.x() += (target_vx - last_target_v.x()) * 0.8;
-      target_lost_v.y() += (target_vy - last_target_v.y()) * 0.8;
+      target_lost_v.x() += (target_vx - last_target_v.x()) * 0.75;
+      target_lost_v.y() += (target_vy - last_target_v.y()) * 0.75;
       cmd.velocity.x = target_lost_v.x();
       cmd.velocity.y = target_lost_v.y();
 
@@ -971,30 +974,34 @@ void cmdCallback(const ros::TimerEvent &e) {
   cmd.velocity.y = std::max(-1.5, std::min(1.5, cmd.velocity.y));
   cmd.velocity.z = std::max(-0.8, std::min(0.8, cmd.velocity.z));
 
-  // 加速度限制：限制速度变化和位置变化
+  // 加速度限制：限制速度变化和位置变化（仅对 x、y 方向生效）
   if (last_cmd_initialized) {
-    // 限制速度变化不超过 max_accel * dt
+    // 限制 x、y 方向速度变化不超过 max_accel * dt，z 方向不做加速度限制
     double max_vel_change = max_accel * accel_dt;
-    Eigen::Vector3d vel_change = Eigen::Vector3d(cmd.velocity.x, cmd.velocity.y, cmd.velocity.z) - last_cmd_velocity;
-    
-    if (vel_change.norm() > max_vel_change) {
-      vel_change = vel_change.normalized() * max_vel_change;
+    Eigen::Vector2d vel_change_xy(
+        cmd.velocity.x - last_cmd_velocity.x(),
+        cmd.velocity.y - last_cmd_velocity.y());
+
+    if (vel_change_xy.norm() > max_vel_change) {
+      vel_change_xy = vel_change_xy.normalized() * max_vel_change;
     }
-    
-    cmd.velocity.x = last_cmd_velocity.x() + vel_change.x();
-    cmd.velocity.y = last_cmd_velocity.y() + vel_change.y();
-    cmd.velocity.z = last_cmd_velocity.z() + vel_change.z();
-    
-    // 限制位置变化：不能超过限制后的速度 * dt
-    Eigen::Vector3d pos_change = Eigen::Vector3d(cmd.position.x, cmd.position.y, cmd.position.z) - last_cmd_position;
-    Eigen::Vector3d limited_vel(cmd.velocity.x, cmd.velocity.y, cmd.velocity.z);
-    double max_pos_change = limited_vel.norm() * accel_dt * 1.5;
-    
-    if (max_pos_change > 0.001 && pos_change.norm() > max_pos_change) {
-      pos_change = pos_change.normalized() * max_pos_change;
-      cmd.position.x = last_cmd_position.x() + pos_change.x();
-      cmd.position.y = last_cmd_position.y() + pos_change.y();
-      cmd.position.z = last_cmd_position.z() + pos_change.z();
+
+    cmd.velocity.x = last_cmd_velocity.x() + vel_change_xy.x();
+    cmd.velocity.y = last_cmd_velocity.y() + vel_change_xy.y();
+    // cmd.velocity.z 保持上一层控制逻辑的结果，仅做速度幅度饱和（上面已对 z 速度做过限幅）
+
+    // 限制位置变化：仅限制 x、y 方向，不能超过限制后的速度 * dt
+    Eigen::Vector2d pos_change_xy(
+        cmd.position.x - last_cmd_position.x(),
+        cmd.position.y - last_cmd_position.y());
+    Eigen::Vector2d limited_vel_xy(cmd.velocity.x, cmd.velocity.y);
+    double max_pos_change_xy = limited_vel_xy.norm() * accel_dt * 3.5;
+
+    if (max_pos_change_xy > 0.001 && pos_change_xy.norm() > max_pos_change_xy) {
+      pos_change_xy = pos_change_xy.normalized() * max_pos_change_xy;
+      cmd.position.x = last_cmd_position.x() + pos_change_xy.x();
+      cmd.position.y = last_cmd_position.y() + pos_change_xy.y();
+      // cmd.position.z 不做加速度相关限制
     }
   } else {
     last_cmd_initialized = true;
@@ -1084,17 +1091,37 @@ void traj_v_callback(const nav_msgs::Path::ConstPtr& msg) {
     }
 }
 
+void traj_a_callback(const nav_msgs::Path::ConstPtr& msg) {
+    // 处理加速度轨迹
+    trajectory_a_points.clear();
+    for (const auto& pose : msg->poses) {
+        Eigen::Vector3d acc;
+        acc << pose.pose.position.x,
+               pose.pose.position.y,
+               pose.pose.position.z;
+        trajectory_a_points.push_back(acc);
+    }
+}
+
+
 void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
-    // 处理target_receive标志
+    // 检查target_receive状态（模仿dog_pos_received的逻辑）
     if (target_count != last_target_count) {
-        target_receive = true;
-        last_target_count = target_count;
-        last_target_timer = 0;
-    } 
-    else {
         last_target_timer++;
-        if (last_target_timer >= 10)
+        if (last_target_timer >= 5) {
+            target_receive = true;
+            // intergral_targetx = 0;
+            // intergral_targety = 0;
+            // intergral_targetz = 0;
+        }
+        last_target_count = target_count;
+        last_target_loss_timer = 0;
+    } else {
+        last_target_loss_timer++;
+        if (last_target_loss_timer >= 5) {  // 连续5次没有新包才重置
             target_receive = false;
+        }
+        last_target_timer = 0;
     }
     
     // 检查dog_pos_received状态（模仿target_count的逻辑）
@@ -1118,7 +1145,7 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     // 处理precise_mode切换逻辑
     if (triger_received_) {
         Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-        if (!precise_mode && hc14_offset_pos_ready && hc14_offset_yaw_ready && target_receive && (((vins_p - target_top).norm() < 0.6 && angle_diff < 0.2) || land_triger_received_))
+        if (!precise_mode && hc14_offset_pos_ready && hc14_offset_yaw_ready && target_receive && (((vins_p - target_top).norm() < 0.4 && angle_diff < 0.2) || land_triger_received_))
         {
             precise_mode = true;
             std::cout << "precise_mode: true" << std::endl;
@@ -1154,7 +1181,7 @@ void mpc_callback(const ros::TimerEvent &event){
   double dt = (now - traj_sub_time).toSec();
   double dt_step = 0.1;  // 时间步长
   
-  dt += 0.0;  // 提前取未来的点
+  dt += 0.2;  // 提前取未来的点
   
   // 计算浮点索引
   double idx_float = dt / dt_step;
@@ -1172,6 +1199,10 @@ void mpc_callback(const ros::TimerEvent &event){
   if (idx_down >= max_idx) {
     mpc_p = trajectory_points[max_idx];
     mpc_v = trajectory_v_points[max_idx];
+    // 如果有加速度轨迹，也使用最后一个点
+    if (!trajectory_a_points.empty() && max_idx < static_cast<int>(trajectory_a_points.size())) {
+      mpc_a = trajectory_a_points[max_idx];
+    }
     return;
   }
   
@@ -1182,6 +1213,13 @@ void mpc_callback(const ros::TimerEvent &event){
   // 加权求和
   mpc_p = weight_down * trajectory_points[idx_down] + weight_up * trajectory_points[idx_up];
   mpc_v = weight_down * trajectory_v_points[idx_down] + weight_up * trajectory_v_points[idx_up];
+  
+  // 如果有加速度轨迹，也进行插值
+  if (!trajectory_a_points.empty() && 
+      idx_down < static_cast<int>(trajectory_a_points.size()) && 
+      idx_up < static_cast<int>(trajectory_a_points.size())) {
+    mpc_a = weight_down * trajectory_a_points[idx_down] + weight_up * trajectory_a_points[idx_up];
+  }
 }
 
 void bppidCallback(const ros::TimerEvent &event) {
@@ -1247,6 +1285,7 @@ int main(int argc, char **argv) {
 
   ros::Subscriber traj_sub_ = nh.subscribe<nav_msgs::Path>("/drone2/planning/traj", 10, traj_callback);
   ros::Subscriber traj_v_sub_ = nh.subscribe<nav_msgs::Path>("/traj_v", 10, traj_v_callback);
+  ros::Subscriber traj_a_sub_ = nh.subscribe<nav_msgs::Path>("/traj_a", 10, traj_a_callback);
   
   // 订阅处理后的dog_pos话题
   ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos_processed", 10, dog_pos_callback);
