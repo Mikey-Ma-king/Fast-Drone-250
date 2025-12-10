@@ -10,7 +10,6 @@ from math import pi
 import threading
 from scipy.interpolate import CubicSpline
 from quadrotor_msgs.msg import PositionCommand
-from quadrotor_msgs.msg import TakeoffLand
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped, Point32
@@ -24,7 +23,6 @@ target_v =np.array([0.0,0.0,0.0])
 target_yaw = 0.0
 target_received_ = 0
 triger = 0
-land_triger = 0
 vins_p =np.array([0.0,0.0,0.0])
 vins_v =np.array([0.0,0.0,0.0])
 vins_yaw = 0
@@ -36,6 +34,8 @@ dog_pos_v = np.array([0.0,0.0,0.0])
 dog_pos_yaw = 0.0
 dog_pos_received_ = 0
 last_target_ekf_time = 0.0
+hc14_offset_yaw_ready = False
+hc14_offset_pos_ready = False
 
 # 目标速度历史记录（用于速度拟合）
 target_vel_history = []  # 存储最近10个速度点
@@ -43,9 +43,6 @@ target_vel_history_times = []  # 存储对应的时间戳
 
 
 land_height_limit = [1.2, 1.5]
-land_target_z = 0.0
-land_triger_time = 0.0  # 降落触发时间
-land_vins_z = 0.0  # 降落时的vins z坐标
 
 class TargetFilter:
     def __init__(self, alpha=0.3, reset_interval=0.5):
@@ -94,10 +91,8 @@ class all_Subscriber:
         # 订阅 /vins_fusion/imu_propagate 主题
         self.pose_sub = rospy.Subscriber('/target_ekf_odom', Odometry, self.pose_cb0)
         self.dog_pos_sub = rospy.Subscriber('/dog_pos_processed', Odometry, self.dog_pos_cb)
-        self.triger_sub = rospy.Subscriber('/land_triger', PoseStamped, self.triger_cb)
         self.vins_sub = rospy.Subscriber('/vins_fusion/imu_propagate', Odometry, self.vins_cb)
-        self.track_sub = rospy.Subscriber('/triger', PoseStamped, self.track_cb)
-        self.takeoff_sub = rospy.Subscriber('/px4ctrl/takeoff_land', TakeoffLand, self.takeoff_cb)
+        self.track_sub = rospy.Subscriber('/mode_manager', PoseStamped, self.mode_cb)
         # 用于保存T1和R1
         # 触发条件的标志
         self.target_filter = TargetFilter(alpha=0.3, reset_interval=0.5)
@@ -124,25 +119,10 @@ class all_Subscriber:
         target_yaw = msg.pose.pose.orientation.w
         target_p[0] = msg.pose.pose.position.x
         target_p[1] = msg.pose.pose.position.y
-        # if (land_triger == 1 and land_target_z == 0.0):
-        #     land_target_z = self.target_filter.filtered_pos[2]
-        # if (land_target_z != 0.0):
-        #     target_p[2] = land_target_z
-        #     # print("sign0:",target_p[2])
-        # else:
-        #     target_p[2] = msg.pose.pose.position.z + 0.09
         target_p[2] = msg.pose.pose.position.z
         
             # print("sign:",target_p[2])
         
-        # if(land_triger == 1):
-        #     target_v[0] = msg.twist.twist.linear.x * math.cos(target_yaw)* math.cos(target_yaw) + msg.twist.twist.linear.y * math.sin(target_yaw)* math.cos(target_yaw)
-        #     target_v[1] = msg.twist.twist.linear.y * math.sin(target_yaw) * math.sin(target_yaw) + msg.twist.twist.linear.x * math.cos(target_yaw) * math.sin(target_yaw)
-        #     target_v[2] = msg.twist.twist.linear.z
-        # else:
-        #     target_v[0] = msg.twist.twist.linear.x
-        #     target_v[1] = msg.twist.twist.linear.y
-        #     target_v[2] = msg.twist.twist.linear.z
         target_v[0] = msg.twist.twist.linear.x
         target_v[1] = msg.twist.twist.linear.y
         target_v[2] = msg.twist.twist.linear.z
@@ -152,7 +132,9 @@ class all_Subscriber:
         global dog_pos_v
         global dog_pos_yaw
         global dog_pos_received_
-        
+        global hc14_offset_yaw_ready
+        global hc14_offset_pos_ready
+
         # 获取处理后的狗位置和速度
         dog_pos_p[0] = msg.pose.pose.position.x
         dog_pos_p[1] = msg.pose.pose.position.y
@@ -165,6 +147,8 @@ class all_Subscriber:
         
         # 处理后的yaw
         dog_pos_yaw = msg.twist.twist.angular.x
+        hc14_offset_yaw_ready = (msg.pose.pose.orientation.z > 0.5)
+        hc14_offset_pos_ready = (msg.pose.pose.orientation.y > 0.5)
 
         dog_pos_received_ = 1
 
@@ -197,31 +181,18 @@ class all_Subscriber:
             vins_p = np.array(self.T1[0])
             vins_v[0] = msg.twist.twist.linear.x
             vins_v[1] = msg.twist.twist.linear.y
-    def triger_cb(self, msg):
-        global land_triger, land_triger_time, land_vins_z, vins_p
-        if land_triger == 0:  # 只在第一次接收到降落信号时记录
-            land_triger_time = time.time()
-            land_vins_z = vins_p[2]
-        land_triger = 1
-
-    def track_cb(self, msg):
-        global triger, target_received_, dog_pos_received_
-        global land_triger
-        triger = 1
+    def mode_cb(self, msg):
+        """
+        使用 /mode_manager 话题控制:
+        - orientation.w == 1: 开启触发，并重置内部状态
+        - orientation.w == 0: 关闭触发，重置状态
+        PoseStamped 其他字段忽略
+        """
+        global triger, target_received_, dog_pos_received_, reset_mpc
+        triger = msg.pose.orientation.w == 0
         target_received_ = 0
         dog_pos_received_ = 0
-
-    def takeoff_cb(self, msg):
-        # 检测起飞指令：1 表示起飞
-        if hasattr(msg, 'takeoff_land_cmd') and msg.takeoff_land_cmd == 1:
-            # 起飞时仅设置状态量，主循环中清空轨迹
-            global target_received_, dog_pos_received_, triger
-            global reset_mpc
-            target_received_ = 0
-            dog_pos_received_ = 0
-            triger = 0
-            reset_mpc = 1
-            land_triger = 0
+        reset_mpc = 1
 
 class TrajectoryVisualizer:
     def __init__(self, frame_id="world"):
@@ -341,7 +312,7 @@ def predict_target_trajectory(pos, vel, N, dt, target_yaw, direct_predict=False,
     - False: 使用速度历史进行一次函数（直线）拟合，然后通过积分得到位置（曲线预测），如果历史点不足ave_num个，则使用传入的vel进行直线预测
     返回的轨迹从shift时间之后开始
     """
-    global land_triger, target_vel_history, target_vel_history_times
+    global target_vel_history, target_vel_history_times
     
     vel_pro = vel.copy()
     
@@ -477,7 +448,6 @@ shift = 0.2
 shift_dog = 0.23
 
 # 仿真模式参数：如果为True，直接使用target_p和target_v，否则使用dog_pos_p和dog_pos_v
-SIMULATE_MODE = False  # 默认False，从ROS参数获取，如果没有则使用False
 
 
 def run_while_loop():
@@ -488,21 +458,16 @@ def run_while_loop():
     global vis
     global target_p_dist,last_target_p_dis,last_last_target_p_dis
     global target_p_dis
-    global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_
+    global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_, hc14_offset_yaw_ready, hc14_offset_pos_ready
     global aoa_fast_v_max, aoa_slow_v_max
     global triger
     global reset_mpc
-    global land_triger, target_received_
-    global SIMULATE_MODE
+    global target_received_
 
     while not rospy.is_shutdown():
         # 等待条件：仿真模式下只需要triger，正常模式需要triger和dog_pos_received_
-        if SIMULATE_MODE:
-            while triger != 1 or target_received_ != 1:
-                time.sleep(0.1)
-        else:
-            while triger != 1 or dog_pos_received_ != 1:
-                time.sleep(0.1)
+        while triger != 1 or not (dog_pos_received_ and hc14_offset_yaw_ready):
+            time.sleep(0.1)
         # 如果有起飞重置请求，则在主循环中清空轨迹和历史记录
         if reset_mpc == 1:
             x_opt = None
@@ -513,16 +478,9 @@ def run_while_loop():
             target_vel_history_times = []
             reset_mpc = 0
         # Target选择逻辑：根据仿真模式选择使用target_p/target_v或dog_pos_p/dog_pos_v
-        if SIMULATE_MODE:
-            # 仿真模式：直接使用target_p和target_v
-            current_target_p = target_p.copy()
-            current_target_v = target_v.copy()
-            current_target_yaw = target_yaw
-        else:
-            # 正常模式：使用dog_pos_processor位置
-            current_target_p = dog_pos_p.copy()
-            current_target_v = dog_pos_v.copy()
-            current_target_yaw = dog_pos_yaw
+        current_target_p = dog_pos_p.copy()
+        current_target_v = dog_pos_v.copy()
+        current_target_yaw = dog_pos_yaw
 
         # 在狗位置基础上添加提前量：沿着vins到狗的方向延伸0.5m
         # dog_to_vins = current_target_p[:2] - vins_p[:2]  # 狗位置到vins位置的向量（2D）
@@ -539,15 +497,8 @@ def run_while_loop():
         # print("target_p:",current_target_p)
         target_p_dis[0] = current_target_p[0]
         target_p_dis[1] = current_target_p[1]
-        # 如果接收到降落信号，将z坐标设置为下降的坐标
-        if land_triger == 1:
-            # 类似traj_server中的实现：land_vins_z - 0.5 * (now - land_triger_time)
-            elapsed_time = time.time() - land_triger_time
-            target_p_dis[2] = land_vins_z - 0.5 * elapsed_time
-            # 同时修改目标速度的z分量为下降速度
-            current_target_v[2] = -0.5
-        else:
-            target_p_dis[2] = min(current_target_p[2] + land_height_limit[1],max(current_target_p[2] + land_height_limit[0], vins_p[2]))
+        target_p_dis[2] = min(current_target_p[2] + land_height_limit[1],max(current_target_p[2] + land_height_limit[0], vins_p[2]))
+        
         if x_opt is not None:
             drone_state,accel = traj_get_state(x_opt, u_opt, int((time.time() - MPC_clcyle + shift)/mpc.dt)*mpc.dt, mpc.dt)
         else :
@@ -572,24 +523,7 @@ def run_while_loop():
         #     target_p_dis[1] = max_dis*(target_p_dis[1] - vins_p[1])/abs(target_p_dis[1] - vins_p[1]) + vins_p[1]
         target_traj = predict_target_trajectory(target_p_dis, current_target_v, mpc.N, mpc.dt , current_target_yaw, shift=shift_dog)
         
-        # # 位置约束逻辑：根据target_received_和land_triger决定是否添加位置约束
-        # # 目标坐标只使用x和y，不使用z
-        # if land_triger == 1:
-        #     target_position_for_mpc = np.array([current_target_p[0], current_target_p[1]])  # 只传x和y
-        #     # 使用指数递减函数：距离越小，weight越大
-        #     # 参数计算：距离1m时weight=4，距离20cm时weight=8
-        #     base_weight = 9.51  # 基础权重
-        #     k = 0.866  # 衰减系数
-        #     max_weight = 50.0  # weight上限
-        #     distance = abs(vins_p[2] - current_target_p[2])  # 垂直距离
-        #     position_weight_for_mpc = base_weight * np.exp(-k * distance)
-        #     position_weight_for_mpc = min(position_weight_for_mpc, max_weight)  # 限制上限
-        # elif target_received_ == 1:
-        #     target_position_for_mpc = np.array([target_p[0], target_p[1]])  # 只传x和y
-        #     position_weight_for_mpc = 3.0
-        # else:
-        #     target_position_for_mpc = None
-        #     position_weight_for_mpc = 0.0
+        # 位置约束逻辑预留：可根据需要添加
         target_position_for_mpc = None
         position_weight_for_mpc = 0.0
 
@@ -605,12 +539,11 @@ def run_while_loop():
             continue
 
         x_opt, u_opt = merge_trajectory(x_opt, new_x_opt, u_opt, new_u_opt, now=time.time() - MPC_clcyle ,shift=shift, mpc_N=mpc.N, dt=mpc.dt)
-        # x_opt = new_x_opt
-        # u_opt = new_u_opt
-        MPC_clcyle = time.time() 
-        time.sleep(0.2)
-        vis.visualize_traj(x_opt, u_opt, mpc.dt, topic="/drone2/planning/traj")
 
+        MPC_clcyle = time.time() 
+        if not reset_mpc:
+            vis.visualize_traj(x_opt, u_opt, mpc.dt, topic="/drone2/planning/traj")
+        time.sleep(0.2)
 last_p_v = None
 last_accel = None
 land_sign = 0

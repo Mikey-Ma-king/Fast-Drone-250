@@ -120,6 +120,7 @@ DogPosProcessor::DogPosProcessor()
       yaw_exceed_timer_(0),
       pos_exceed_timer_(0),
       initialized_(false),
+      simulate_mode_(false),
       raw_dog_vel_(Eigen::Vector3d::Zero()),
       raw_dog_yaw_(0.0),
       raw_dog_pos_received_(false),
@@ -183,6 +184,9 @@ DogPosProcessor::DogPosProcessor()
     aoa_min_distance_diff_ = 0.1;  // 两个anchor距离差的最小值，小于此值则认为距离差太小，不更新
     aoa_anchor_separation_ = 0.5;  // 两个anchor之间的距离（50cm）
     flow_height_bias_ = 0.47;  // 与withdraw一致的零偏
+
+    // 仿真模式：直接输出target_ekf为dog_pos_processed
+    simulate_mode_ = false;
     
     // 发布者 - 使用Odometry格式
     dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);
@@ -297,8 +301,11 @@ void DogPosProcessor::updateDogYawRate(double delta_yaw) {
 
 // 处理目标数据（来自read模块的target_ekf_odom）
 void DogPosProcessor::targetCallback(const nav_msgs::Odometry::ConstPtr& msg) {
-    // 从target_ekf_odom中提取yaw（假设在orientation.w中）
-    target_dog_yaw_ = msg->pose.pose.orientation.w;
+    // 从target_ekf_odom中解算yaw（仅使用该消息的四元数）
+    const auto& q = msg->pose.pose.orientation;
+    double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
+    double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+    target_dog_yaw_ = std::atan2(siny_cosp, cosy_cosp);
     
     // 从target_ekf_odom中提取位置
     target_dog_pos_.x() = msg->pose.pose.position.x;
@@ -306,6 +313,36 @@ void DogPosProcessor::targetCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     target_dog_pos_.z() = msg->pose.pose.position.z;
     
     target_count_++;
+
+    // 仿真模式：直接在目标回调中发布 dog_pos_processed
+    if (simulate_mode_) {
+        nav_msgs::Odometry out;
+        out.header.stamp = ros::Time::now();
+        out.header.frame_id = "world";
+
+        // 位置
+        out.pose.pose.position.x = msg->pose.pose.position.x;
+        out.pose.pose.position.y = msg->pose.pose.position.y;
+        out.pose.pose.position.z = msg->pose.pose.position.z;
+
+        // ready flags
+        out.pose.pose.orientation.w = 1.0;  // initialized_
+        out.pose.pose.orientation.x = 0.0;
+        out.pose.pose.orientation.y = 1.0;  // precise_pos_offset_ready_
+        out.pose.pose.orientation.z = 1.0;  // precise_yaw_offset_ready_
+
+        // 速度
+        out.twist.twist.linear.x = msg->twist.twist.linear.x;
+        out.twist.twist.linear.y = msg->twist.twist.linear.y;
+        out.twist.twist.linear.z = msg->twist.twist.linear.z;
+
+        // yaw 和 yaw_rate
+        out.twist.twist.angular.x = target_dog_yaw_;
+        out.twist.twist.angular.y = 0.0;
+        out.twist.twist.angular.z = 0.0;
+
+        dog_pos_pub_.publish(out);
+    }
 }
 
 // 处理VINS数据

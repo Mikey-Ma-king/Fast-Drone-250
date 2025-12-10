@@ -27,28 +27,17 @@
 
 ros::Publisher pos_cmd_pub_;
 ros::Publisher land_pub_;
+ros::Publisher mode_pub_;
 int land_lock_timer = 0;
-ros::Publisher land_mark_pub_;
-ros::Publisher test_mark_pub_;
-ros::Publisher land_triger_pub;
 ros::Publisher debug_pub_;  // 添加调试信息发布器
-ros::Publisher yaw_offset_pub;  // 发布yaw offset差值
 ros::Time heartbeat_time_;
-bool receive_traj_ = false;
-bool flight_start_ = false;
-Eigen::Vector3d last_p_;
-double last_yaw_ = 0;
-bool precise_mode = false;
 
 // 保存上一次发布的命令速度和位置，用于加速度限制
 Eigen::Vector3d last_cmd_velocity{0, 0, 0};
 Eigen::Vector3d last_cmd_position{0, 0, 0};
 bool last_cmd_initialized = false;
 
-double Kt = 0.6;
-bool triger_received_ = false;
-bool land_triger_received_ = false;
-bool stop_triger_received_ = false; 
+int triger_mode = -1;
 Eigen::Vector3d vins_p{0,0,0},vins_v{0,0,0};
 double vins_yaw = 0;
 // double last_target_yaw = 0;
@@ -81,9 +70,9 @@ bool hc14_offset_pos_ready = false;  // hc14_dog位置信息是否可用
 double kp = 1.2;
 double tracking_dist_ = 1.5;
 double target_receive_triger = 1;
-double land_triger = 0;
-ros::Time land_triger_time;
-double land_vins_z = 0;
+ros::Time mode_triger_time;
+double mode_vins_z = 0;
+bool reflight_complete = false;
 ros::Time target_lost_time;
 Eigen::Vector3d target_lost_p = {0,0,0};
 Eigen::Vector3d target_lost_v = {0,0,0};
@@ -92,8 +81,6 @@ Eigen::Vector3d last_target_v = {0,0,0};
 double AOA_x = 10;
 double AOA_w = 0;
 double flow_z = -1;
-ros::Time flow_timer;
-bool flow_detect = false;
 double last_error_x = 0;
 double last_error_y = 0;
 double last_error_z = 0;
@@ -202,7 +189,6 @@ std::vector<Eigen::Vector3d> target_p_list,target_v_list;
 
 ros::Time traj_start_time;
 bool traj_initialized = false;
-double traj_dt = 0.2;
 std::vector<Eigen::Vector3d> trajectory_points;
 std::vector<Eigen::Vector3d> trajectory_v_points;
 std::vector<Eigen::Vector3d> trajectory_a_points;
@@ -605,48 +591,6 @@ Eigen::MatrixXd predictTargetTrajectory(const Eigen::Vector3d& pos, const Eigen:
       return trajectory;
 }
 
-Eigen::Vector3d get_traj_point_at() {
-    if (!traj_initialized || trajectory_points.size() < 2) {
-        ROS_WARN("Trajectory not initialized or too short");
-        return Eigen::Vector3d::Zero();
-    }
-
-    double t_now = (ros::Time::now() - traj_start_time).toSec() + 0.15;
-    double idx_f = t_now / traj_dt;
-    size_t idx = static_cast<size_t>(idx_f);
-    double alpha = idx_f - idx;
-
-    if (idx >= trajectory_points.size() - 1) {
-        return trajectory_points.back();
-    }
-
-    Eigen::Vector3d p0 = trajectory_points[idx];
-    Eigen::Vector3d p1 = trajectory_points[idx + 1];
-
-    return (1.0 - alpha) * p0 + alpha * p1;
-}
-
-Eigen::Vector3d get_traj_v_point_at() {
-    if (!traj_initialized || trajectory_v_points.size() < 2) {
-        ROS_WARN("Velocity trajectory not initialized or too short");
-        return Eigen::Vector3d::Zero();
-    }
-
-    double t_now = (ros::Time::now() - traj_start_time).toSec() + 0.15;
-    double idx_f = t_now / traj_dt;
-    size_t idx = static_cast<size_t>(idx_f);
-    double alpha = idx_f - idx;
-
-    if (idx >= trajectory_v_points.size() - 1) {
-        return trajectory_v_points.back();
-    }
-
-    Eigen::Vector3d v0 = trajectory_v_points[idx];
-    Eigen::Vector3d v1 = trajectory_v_points[idx + 1];
-
-    return (1.0 - alpha) * v0 + alpha * v1;
-}
-  
 
   // 独立函数：通过二次插值获取轨迹中的状态
 std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen::VectorXd>& x_traj,
@@ -677,13 +621,15 @@ std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen
 void cmdCallback(const ros::TimerEvent &e) {
   // if (!(hc14_dog_pos_received && hc14_offset_yaw_ready))
   //   return;
-  if (!triger_received_)
+  if (triger_mode != -1 && triger_mode != 0 && triger_mode != 1 && triger_mode != 2)
     return;
-  if (stop_triger_received_)
+  if (triger_mode == -1)
     return;
-  if (!traj_initialized)
+  if (triger_mode == 0 && !traj_initialized)
     return;
-
+  if ((triger_mode == 1 || triger_mode == 2) && !(hc14_dog_pos_received && hc14_offset_yaw_ready))
+    return;
+  
   quadrotor_msgs::PositionCommand cmd;
   cmd.header.stamp = ros::Time::now();
   cmd.header.frame_id = "world";
@@ -697,13 +643,6 @@ void cmdCallback(const ros::TimerEvent &e) {
   double angle_diff = 0;
 
 
-  if (land_triger_received_ && land_triger == 0)
-  {
-    land_triger_time = ros::Time::now();
-    land_vins_z = vins_p.z();
-    land_triger = 1;
-  }
-
   // 目前mpc没有控制yaw，还使用目标的yaw
   target_yaw = hc14_dog_yaw;
 
@@ -714,7 +653,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     angle_diff += 2 * M_PI;
   }
 
-  if (!precise_mode) {
+  if (triger_mode == 0) {
     target_vx = mpc_v.x();
     target_vy = mpc_v.y();
     target_vz = mpc_v.z();
@@ -723,7 +662,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     targety = mpc_p.y();
     targetz = mpc_p.z();
 
-  } else {
+  } else if (triger_mode == 1 || triger_mode == 2) {
     target_vx = hc14_dog_vel.x();
     target_vy = hc14_dog_vel.y();
 
@@ -755,14 +694,33 @@ void cmdCallback(const ros::TimerEvent &e) {
     target_vx += vel_compensation_x;
     target_vy += vel_compensation_y;    
 
-    if (!land_triger_received_)
+    if (triger_mode == 1)
     {
-      targetz = std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z()));
-      target_vz = target_v.z();
+      if (reflight_complete){
+        targetz = std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z()));
+        target_vz = target_v.z();
+      } else {
+        if (mode_vins_z < target_p.z() + land_height_limit[0]){
+          targetz = mode_vins_z + 0.2 * (ros::Time::now() - mode_triger_time).toSec();
+          target_vz = target_v.z() + 0.2;
+          if (vins_p.z() > target_p.z() + land_height_limit[0]){
+            reflight_complete = true;
+          }
+        } else if (mode_vins_z > target_p.z() + land_height_limit[1]){
+          targetz = mode_vins_z - 0.2 * (ros::Time::now() - mode_triger_time).toSec();
+          target_vz = target_v.z() - 0.2;
+          if (vins_p.z() < target_p.z() + land_height_limit[1]){
+            reflight_complete = true;
+          }
+        }
+        else {
+          reflight_complete = true;
+        }
+      }
     }
-    else
+    else if (triger_mode == 2)
     {
-      targetz = land_vins_z - 0.4 * (ros::Time::now() - land_triger_time).toSec();
+      targetz = mode_vins_z - 0.4 * (ros::Time::now() - mode_triger_time).toSec();
       target_vz = -0.4;
       // targetz = vins_p.z() - 0.4;
       // target_vz = target_v.z() - 0.08;
@@ -779,29 +737,6 @@ void cmdCallback(const ros::TimerEvent &e) {
     last_error_targety = error_targety;
     last_error_targetz = error_targetz;
   }
-
-  // BPNN_count ++;
-  // if (BPNN_count > 4) {
-  // auto params_x = pid_x.compute(error_targetx, error_targetx - last_error_targetx, mpc_v.x());
-  // auto params_y = pid_y.compute(error_targety, error_targety - last_error_targety, mpc_v.y());
-  // auto params_z = pid_z.compute(error_targetz,, 0.0);
-  // BPNN_count -= 4;
-  // // std::cout << "derror_x: " << delta_error_x << " derror_y: " << delta_error_y << std::endl;
-  // }
-  // const double adaptive_kp_x = pid_x.get_parm().Kp;
-  // const double adaptive_ki_x = pid_x.get_parm().Ki;
-  // const double adaptive_kd_x = pid_x.get_parm().Kd;
-
-
-  // const double adaptive_kp_y = pid_y.get_parm().Kp;
-  // const double adaptive_ki_y = pid_y.get_parm().Ki;
-  // const double adaptive_kd_y = pid_y.get_parm().Kd;
-
-
-  // const double adaptive_kp_z = pid_z.get_parm().Kp;
-  // const double adaptive_ki_z = pid_z.get_parm().Ki;
-  // const double adaptive_kd_z = pid_z.get_parm().Kd;
-  
 
   // 先将误差和速度转换到无人机vins_yaw坐标系，PID后再转回世界系
   double cos_yaw = cos(vins_yaw);
@@ -824,7 +759,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   double current_x_d, current_y_d, current_z_d, current_pos_x_d, current_pos_y_d;
   double current_x_d_max, current_y_d_max, current_z_d_max, current_pos_x_d_max, current_pos_y_d_max;
   
-  if (!precise_mode) {
+  if (triger_mode == 0) {
     current_x_p = mpc_x_p;
     current_y_p = mpc_y_p;
     current_z_p = mpc_z_p;
@@ -845,7 +780,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     current_z_d_max = mpc_z_d_max;
     current_pos_x_d_max = mpc_pos_x_d_max;
     current_pos_y_d_max = mpc_pos_y_d_max;
-  } else {  
+  } else if (triger_mode == 1 || triger_mode == 2) {  
     current_x_p = x_p;
     current_y_p = y_p;
     current_z_p = z_p;
@@ -894,23 +829,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   // P控制器计算角速度
   cmd.yaw_dot = std::max(-max_yaw_rate, std::min(max_yaw_rate, yaw_kp * angle_diff));
 
-  // cmd.position.x = targetx;
-  // cmd.position.y = targety;
-  // cmd.position.z = targetz;
-
-  
-  // cmd.velocity.x = target_vx + x_p * error_targetx + x_i * intergral_targetx + std::max(std::min(1.8 * (error_targetx - last_error_targetx),0.12),-0.12);
-  // cmd.velocity.y = target_vy + y_p * error_targety + y_i * intergral_targety + std::max(std::min(2.5 * (error_targety - last_error_targety),0.12),-0.12);
-  // cmd.velocity.z = target_vz + z_p * error_targetz + z_i * intergral_targetz + std::max(std::min(1.8 * (error_targetz - last_error_targetz),0.12),-0.12);
-
-
-  if(land_triger_received_){
-    // Eigen::Vector3d BLSC_velocity;
-    // BLSCController(vins_p, vins_v, mpc_p, mpc_v, BLSC_velocity);
-    // cmd.velocity.x = BLSC_velocity.x();
-    // cmd.velocity.y = BLSC_velocity.y();
-    // cmd.velocity.z = BLSC_velocity.z();
-
+  if(triger_mode == 2){
     // 降落过程中需要实时更新target信息
     if (target_count == last_precise_target_count) {
       if (target_receive_triger == 1){
@@ -949,20 +868,11 @@ void cmdCallback(const ros::TimerEvent &e) {
       quadrotor_msgs::TakeoffLand land;
       land.takeoff_land_cmd = 2;
       land_pub_.publish(land);
-      
-      // 发布到ROS话题
-      // std_msgs::Float64 yaw_diff_msg;
-      // yaw_diff_msg.data = angle_diff;
-      // yaw_offset_pub.publish(yaw_diff_msg);
-      // std::cout << "Published yaw diff: " << angle_diff * 180.0 / M_PI << " degrees" << std::endl;
-      
-      
-      
-      land_triger_received_ = false;
-      triger_received_ = false;
-      land_lock_timer = 0;
-      land_triger = 0;
-      precise_mode = false;
+
+      geometry_msgs::PoseStamped mode_msg;
+      mode_msg.header.stamp = ros::Time::now();
+      mode_msg.pose.orientation.w = -1;
+      mode_pub_.publish(mode_msg);
     }
   }
 
@@ -1046,16 +956,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   // debug_msg.yaw = last_error_targetx;  // 使用yaw字段存储last_error_targetx
   // debug_pub_.publish(debug_msg);
 
-  // 使用test_mark_pub_发布cmd频率监控信息
-  // std_msgs::Float64 freq_msg;
-  // freq_msg.data = ros::Time::now().toSec();  // 发布当前时间戳
-  // test_mark_pub_.publish(freq_msg);
-
   pos_cmd_pub_.publish(cmd);
-
-  if (land_triger_received_)
-    land_mark_pub_.publish(cmd);
-
   return;
 }
 
@@ -1075,9 +976,7 @@ void traj_callback(const nav_msgs::Path::ConstPtr& msg) {
 
 void traj_v_callback(const nav_msgs::Path::ConstPtr& msg) {
     if (!traj_initialized && !msg->poses.empty()) {
-        traj_start_time = ros::Time::now();
         traj_initialized = true;
-        ROS_INFO("Trajectory initialized at t = %.3f", traj_start_time.toSec());
     }
 
     // 每次完全更新 trajectory_points，只保留起点一致的新轨迹
@@ -1110,9 +1009,6 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
         last_target_timer++;
         if (last_target_timer >= 5) {
             target_receive = true;
-            // intergral_targetx = 0;
-            // intergral_targety = 0;
-            // intergral_targetz = 0;
         }
         last_target_count = target_count;
         last_target_loss_timer = 0;
@@ -1142,34 +1038,68 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
       angle_diff += 2 * M_PI;
     }
 
-    // 处理precise_mode切换逻辑
-    if (triger_received_) {
-        Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
-        if (!precise_mode && hc14_offset_pos_ready && hc14_offset_yaw_ready && target_receive && (((vins_p - target_top).norm() < 0.4 && angle_diff < 0.2) || land_triger_received_))
-        {
-            precise_mode = true;
-            std::cout << "precise_mode: true" << std::endl;
-        }
-        else if (precise_mode && (((vins_p - target_top).norm() > 2.0) && !land_triger_received_))
-        {
-            precise_mode = false;
-            std::cout << "precise_mode: false" << std::endl;
-        }
+    // 处理triger_mode切换逻辑
+    Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
+    if (triger_mode == 0){
+      if (hc14_offset_pos_ready && 
+          hc14_offset_yaw_ready && 
+          target_receive && 
+          (vins_p - target_top).norm() < 0.4 && 
+          angle_diff < 0.2)
+      {
+          geometry_msgs::PoseStamped mode_msg;
+          mode_msg.header.stamp = ros::Time::now();
+          mode_msg.pose.orientation.w = 1;
+          mode_pub_.publish(mode_msg);
+          std::cout << "precise_mode: true" << std::endl;
+      }
     }
+    else if (triger_mode == 1){
+      if (hc14_offset_yaw_ready && 
+          hc14_dog_pos_received &&
+          std::fabs(target_v.x() - vins_v.x()) < 0.2 && 
+          std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
+          std::fabs(target_p.x() - vins_p.x()) < 0.3 &&
+          std::fabs(target_p.y() - vins_p.y()) < 0.3 &&
+          angle_diff < 20.0/180.0 * M_PI)
+      {
+        land_timer ++;
+        if (land_timer > 5)
+        {
+          geometry_msgs::PoseStamped mode_msg;
+          mode_msg.header.stamp = ros::Time::now();
+          mode_msg.pose.orientation.w = 2;
+          mode_pub_.publish(mode_msg);
+          std::cout << "land_mode: true" << std::endl;
+          land_timer = 0;
+        }
+      }else if ((vins_p - target_top).norm() > 1.0){ // 可能遇到障碍时切回mpc避障
+        geometry_msgs::PoseStamped mode_msg;
+        mode_msg.header.stamp = ros::Time::now();
+        mode_msg.pose.orientation.w = 0;
+        mode_pub_.publish(mode_msg);
+        std::cout << "precise_mode: false" << std::endl;
+        land_timer = std::max(0.0, land_timer - 1.0);
+      }else{
+        land_timer = std::max(0.0, land_timer - 1.0);
+      }
+    }
+    else if (triger_mode == 2){
+      if (!(std::fabs(target_v.x() - vins_v.x()) < 0.4 && 
+            std::fabs(target_v.y() - vins_v.y()) < 0.4 && 
+            std::fabs(target_p.x() - vins_p.x()) < 0.5 &&
+            std::fabs(target_p.y() - vins_p.y()) < 0.5 &&
+            angle_diff < 30.0/180.0 * M_PI))
+      {
+        geometry_msgs::PoseStamped mode_msg;
+        mode_msg.header.stamp = ros::Time::now();
+        mode_msg.pose.orientation.w = 1;
+        mode_pub_.publish(mode_msg);
+        std::cout << "land_mode: false" << std::endl;
+      }
+    }
+  
 
-    // quadrotor_msgs::PositionCommand test;
-    // test.header.stamp = ros::Time::now();
-    // test.header.frame_id = "world";
-    // test.trajectory_flag = quadrotor_msgs::PositionCommand::TRAJECTORY_STATUS_READY;
-    // test.trajectory_id = 0.0;
-    // test.velocity.x = 0.0;
-    // test.velocity.y = 0.0;
-    // test.velocity.z = 0.0;
-    // test.yaw = 0.0;
-    // test.position.x = target_receive * 1.0;
-    // test.position.y = 0.0;
-    // test.position.z = 0.0;
-    // test_mark_pub_.publish(test);
 }
 
 void mpc_callback(const ros::TimerEvent &event){
@@ -1181,7 +1111,7 @@ void mpc_callback(const ros::TimerEvent &event){
   double dt = (now - traj_sub_time).toSec();
   double dt_step = 0.1;  // 时间步长
   
-  dt += 0.2;  // 提前取未来的点
+  dt += 0.0;  // 提前取未来的点
   
   // 计算浮点索引
   double idx_float = dt / dt_step;
@@ -1222,62 +1152,14 @@ void mpc_callback(const ros::TimerEvent &event){
   }
 }
 
-void bppidCallback(const ros::TimerEvent &event) {
-  if (triger_received_) {
-    std::cout << "Final PID parameters for X axis: Kp=" << pid_x.get_parm().Kp 
-          << ", Ki=" << pid_x.get_parm().Ki << ", Kd=" << pid_x.get_parm().Kd << std::endl;
-
-      std::cout << "Final PID parameters for Y axis: Kp=" << pid_y.get_parm().Kp 
-                << ", Ki=" << pid_y.get_parm().Ki << ", Kd=" << pid_y.get_parm().Kd << std::endl;
-
-      std::cout << "Final PID parameters for Z axis: Kp=" << pid_z.get_parm().Kp 
-                << ", Ki=" << pid_z.get_parm().Ki << ", Kd=" << pid_z.get_parm().Kd << std::endl;
-
-  }
-}
-
-void auto_landing_detect(const ros::TimerEvent &event) {
-  if (!triger_received_) 
-  {
-    return;
-  }
-
-  if (!land_triger_received_ && target_receive && 
-    hc14_offset_yaw_ready && hc14_dog_pos_received &&
-    std::fabs(target_v.x() - vins_v.x()) < 0.5 && 
-    std::fabs(target_v.y() - vins_v.y()) < 0.5 && 
-    std::fabs(target_v.z() - vins_v.z()) < 0.5 &&
-    std::fabs(target_p.x() - vins_p.x()) < 0.3 &&
-    std::fabs(target_p.y() - vins_p.y()) < 0.3 &&
-    std::fabs(target_dog_yaw - vins_yaw) < 10.0/180.0 * M_PI)
-  {
-    if (land_timer > 10)
-    {
-      std::cout << "Auto landing triggered!" << std::endl;
-      // land_triger_received_ = true;
-      geometry_msgs::PoseStamped land_pose;
-      land_pose.pose.position.x = 0.0;
-      land_triger_pub.publish(land_pose);
-      land_timer = 0;
-    }
-    land_timer ++;
-  }
-  else {
-    land_timer = std::max(0.0, land_timer - 1.0);
-  }
-}
-
 int main(int argc, char **argv) {
   ros::init(argc, argv, "traj_server");
   ros::NodeHandle nh("~");
 
   ros::Subscriber heartbeat_sub = nh.subscribe("heartbeat", 10, heartbeatCallback);
-  ros::Subscriber triger_sub_ = nh.subscribe("/triger", 10, triger_callback);
-  ros::Subscriber land_triger_sub_ = nh.subscribe("/land_triger", 10, land_triger_callback);
-  ros::Subscriber stop_triger_sub_ = nh.subscribe("/stop_triger", 10, stop_triger_callback);
+  ros::Subscriber triger_sub_ = nh.subscribe("/mode_manager", 10, mode_callback);
   ros::Subscriber odom_sub_ = nh.subscribe("/vins_fusion/imu_propagate", 10, odom_callback);
   ros::Subscriber target_sub_ = nh.subscribe("/target_ekf_odom", 10, target_callback);
-  // ros::Subscriber mpc_sub_ = nh.subscribe("/mpc", 10, mpc_callback);
   ros::Subscriber AOA_sub_ = nh.subscribe("/AOA_Tag_data", 10, AOA_callback);
   ros::Subscriber flow_sub_ = nh.subscribe("/flow_data", 10, flow_callback);
 
@@ -1293,23 +1175,17 @@ int main(int argc, char **argv) {
 
   pos_cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd", 50);
   land_pub_ = nh.advertise<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land",1);
-  land_mark_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/land_mark", 50);
-  test_mark_pub_ = nh.advertise<std_msgs::Float64>("/test_mark", 50);
-  land_triger_pub = nh.advertise<geometry_msgs::PoseStamped>("/land_triger", 50);
+  mode_pub_ = nh.advertise<geometry_msgs::PoseStamped>("/mode_manager", 10);
   debug_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/debug_info", 50); // 添加调试信息发布器
-  yaw_offset_pub = nh.advertise<std_msgs::Float64>("/yaw_diff_preset", 10); // 发布飞机和狗的yaw差值
   
   ros::Timer init_timer = nh.createTimer(ros::Duration(2.0), initCallback);
 
   ros::Timer cmd_timer = nh.createTimer(ros::Duration(0.015), cmdCallback);
 
-  // ros::Timer bppid_timer = nh.createTimer(ros::Duration(1), bppidCallback);
 
   ros::Timer mpc_timer = nh.createTimer(ros::Duration(0.01), mpc_callback);
 
   ros::Timer flag_and_hc14_process_timer = nh.createTimer(ros::Duration(0.1), flag_and_hc14_process_callback);
-
-//   ros::Timer auto_land_timer = nh.createTimer(ros::Duration(0.2), auto_landing_detect);
 
   ros::Duration(1.0).sleep();
 

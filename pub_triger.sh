@@ -1,4 +1,4 @@
-rostopic pub /triger geometry_msgs/PoseStamped "header:
+rostopic pub /mode_manager geometry_msgs/PoseStamped "header:
   seq: 0
   stamp:
     secs: 0

@@ -11,6 +11,7 @@ PATHS=(
     "/home/pc/Fast-Drone-250"
     "/home/pc/Fast-Drone-250"
     "/home/pc/Fast-Drone-250"
+    "/home/pc/Fast-Drone-250"
 )
 # 对应命令
 CMDS=(
@@ -21,6 +22,8 @@ CMDS=(
     "./pub_triger.sh"
     "./land_triger.sh"
     "./tracker.sh"
+    "source devel/setup.bash; 
+roslaunch planning dog_pos_processor.launch"
 )
 
 # 如果会话已存在，则杀掉
@@ -30,7 +33,7 @@ tmux has-session -t $SESSION 2>/dev/null && tmux kill-session -t $SESSION
 tmux new-session -d -s $SESSION -c "${PATHS[0]}"
 
 # 使用水平分割创建其余 6 个 pane
-for i in {1..6}; do
+for i in {1..7}; do
     if [ $((i % 2)) -eq 1 ]; then
         # 奇数：水平分割
         tmux split-window -h -t $SESSION:0 -c "${PATHS[$i]}"
@@ -44,7 +47,7 @@ done
 tmux select-layout -t ${SESSION}:0 tiled
 
 # 发送命令但不执行
-for i in {0..6}; do
+for i in {0..7}; do
     tmux send-keys -t ${SESSION}:0.$i "${CMDS[$i]}"
 done
 

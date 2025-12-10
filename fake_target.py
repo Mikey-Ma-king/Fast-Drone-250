@@ -78,7 +78,7 @@ def publish_oscillating_motion():
     # 运动参数
     vx_positive = rospy.get_param('~vx_positive', 1.0)      # 正向速度（m/s）
     vx_negative = rospy.get_param('~vx_negative', -1.0)      # 负向速度（m/s）
-    period = rospy.get_param('~period', 30.0)                # 每个方向的持续时间（秒）
+    period = rospy.get_param('~period', 20.0)                # 每个方向的持续时间（秒）
     start_x = rospy.get_param('~start_x', 0.0)               # 起始x坐标
     start_y = rospy.get_param('~start_y', 0.0)               # 起始y坐标
     height = rospy.get_param('~height', 1.0)                 # 高度（m）
@@ -139,7 +139,7 @@ def publish_oscillating_motion():
 
 if __name__ == '__main__':
     # 通过参数选择运动模式：'circle' 或 'oscillating'
-    mode = 'circle'
+    mode = 'oscillating'
     
     try:
         if mode == 'oscillating':

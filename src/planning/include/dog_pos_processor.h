@@ -104,6 +104,7 @@ private:
     int pos_exceed_timer_;
     double* saved_yaw_diff_;  // 使用指针，nullptr表示未设置
     bool initialized_;
+    bool simulate_mode_;  // 仿真模式：直接输出target_ekf作为dog_pos_processed
     
     // 原始数据
     nav_msgs::Odometry::ConstPtr raw_dog_pos_;

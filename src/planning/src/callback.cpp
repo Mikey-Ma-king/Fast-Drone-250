@@ -23,10 +23,7 @@ extern bool hc14_offset_pos_ready;
 
 extern double AOA_x;
 extern double AOA_w;
-double last_flow_z;
 extern double flow_z;
-extern ros::Time flow_timer;
-extern bool flow_detect;
 
 extern double x_p;
 extern double x_i;
@@ -42,12 +39,14 @@ extern double intergral_targetx;
 extern double intergral_targety;
 extern double intergral_targetz;
 
-extern bool triger_received_;
-extern bool land_triger_received_;
-extern bool stop_triger_received_;
+extern int triger_mode;
+extern int land_lock_timer;
+extern ros::Time mode_triger_time;
+extern double mode_vins_z;
+extern bool reflight_complete;
+extern bool traj_initialized;
 extern bool last_cmd_initialized;
 extern ros::Time heartbeat_time_;
-extern bool precise_mode;
 bool odom_received_ = false;
 
 void initCallback(const ros::TimerEvent &event) {
@@ -185,38 +184,39 @@ void AOA_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 
 void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     flow_z = msg->pose.pose.position.z;
-    if (last_flow_z == 0)
-        last_flow_z = flow_z;
-    if ((last_flow_z - flow_z > 0.3 || flow_detect) && (vins_p - target_p).norm() < 3 && land_triger_received_) {
-        flow_detect = true;
-        last_flow_z = flow_z;
-        std::cout << "flow detected" << std::endl;
-        return;
+}
+
+void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
+    int new_triger_mode = msgPtr->pose.orientation.w;
+    std::cout << "new_triger_mode: " << new_triger_mode << std::endl;
+    if (new_triger_mode == -1){
+        intergral_targetx = 0;
+        intergral_targety = 0;
+        intergral_targetz = 0;
+    }else if (new_triger_mode == 0){
+        if (triger_mode == -1){
+            last_cmd_initialized = false;
+        }
+        traj_initialized = false;
+
+    }else if (new_triger_mode == 1){
+        if (triger_mode == -1){
+            last_cmd_initialized = false;
+        }
+        mode_vins_z = vins_p.z();
+        mode_triger_time = ros::Time::now();
+        reflight_complete = false;
+    }else if (new_triger_mode == 2){
+        if (triger_mode == -1){
+            last_cmd_initialized = false;
+        }
+        land_lock_timer = 0;
+        mode_triger_time = ros::Time::now();
+        mode_vins_z = vins_p.z();
     }
-    flow_detect = false;
-    flow_timer = ros::Time::now();
-    last_flow_z = flow_z;
-}
 
-void triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
-    triger_received_ = true;
-    land_triger_received_ = false;
-    stop_triger_received_ = false;
-    precise_mode = false;
-    intergral_targetx = 0;
-    intergral_targety = 0;
-    intergral_targetz = 0;
-    last_cmd_initialized = false;
-}
 
-void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
-    land_triger_received_ = true;
-}
-
-void stop_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
-    stop_triger_received_ = true;
-    land_triger_received_ = false;
-    triger_received_ = false;
+    triger_mode = new_triger_mode;
 }
 
 void heartbeatCallback(const std_msgs::EmptyConstPtr &msg) {
