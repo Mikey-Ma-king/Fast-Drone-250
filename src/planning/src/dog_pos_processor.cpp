@@ -104,8 +104,8 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> KalmanFilter::filter(
 
 // 重置滤波器
 void KalmanFilter::reset() {
-    state_ = Eigen::VectorXd::Zero(6);
-    covariance_ = Eigen::MatrixXd::Identity(6, 6) * 100.0;
+    // state_ = Eigen::VectorXd::Zero(6);
+    // covariance_ = Eigen::MatrixXd::Identity(6, 6) * 100.0;
     initialized_ = false;
 }
 
@@ -174,15 +174,13 @@ DogPosProcessor::DogPosProcessor()
     pos_exceed_max_count_ = 5;  // 位置超限最大计数
     pos_filter_gain_ = 0.05;  // 位置滤波增益
     aoa_pos_filter_gain_ = 0.05;  // AOA位置滤波增益（比pos_filter_gain小）
-    aoa_pos_step_limit_ = 0.01;   // AOA单次迭代上限（米）
+    aoa_pos_step_limit_ = 0.02;   // AOA单次迭代上限（米）
     
     // 前馈系数（参考traj_server.cpp）
     camera_offset_ = 0.37;  // 关键参数，与traj_server一致
 
     // AOA相关参数
-    aoa_min_distance_ = 2.0;  // m
-    aoa_min_distance_diff_ = 0.1;  // 两个anchor距离差的最小值，小于此值则认为距离差太小，不更新
-    aoa_anchor_separation_ = 0.5;  // 两个anchor之间的距离（50cm）
+    aoa_min_distance_ = 5.0;  // m
     flow_height_bias_ = 0.47;  // 与withdraw一致的零偏
 
     // 仿真模式：直接输出target_ekf为dog_pos_processed
@@ -302,10 +300,7 @@ void DogPosProcessor::updateDogYawRate(double delta_yaw) {
 // 处理目标数据（来自read模块的target_ekf_odom）
 void DogPosProcessor::targetCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     // 从target_ekf_odom中解算yaw（仅使用该消息的四元数）
-    const auto& q = msg->pose.pose.orientation;
-    double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
-    double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
-    target_dog_yaw_ = std::atan2(siny_cosp, cosy_cosp);
+    target_dog_yaw_ = msg->pose.pose.orientation.w;
     
     // 从target_ekf_odom中提取位置
     target_dog_pos_.x() = msg->pose.pose.position.x;
@@ -644,15 +639,26 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         aoa_debug_msg.pose.pose.position.z = aoa_pos_world.z();
         aoa_dog_pos_debug_pub_.publish(aoa_debug_msg);
 
-        // 位置偏移滤波
+        // 位置偏移滤波：x和y分开迭代，z不迭代
         Eigen::Vector3d pos_offset_diff = current_pos_offset - pos_offset_;
-        double diff_norm = pos_offset_diff.norm();
-        if (diff_norm > 1e-6) {
-            // 按比例逼近，单次步长上限 aoa_pos_step_limit_
-            double step = aoa_pos_filter_gain_ * diff_norm;
-            step = std::min(step, aoa_pos_step_limit_);
-            pos_offset_ += pos_offset_diff * (step / diff_norm);
+        
+        // x方向迭代
+        double diff_x = pos_offset_diff.x();
+        if (std::abs(diff_x) > 1e-6) {
+            double step_x = aoa_pos_filter_gain_ * std::abs(diff_x);
+            step_x = std::min(step_x, aoa_pos_step_limit_);
+            pos_offset_.x() += (diff_x > 0 ? step_x : -step_x);
         }
+        
+        // y方向迭代
+        double diff_y = pos_offset_diff.y();
+        if (std::abs(diff_y) > 1e-6) {
+            double step_y = aoa_pos_filter_gain_ * std::abs(diff_y);
+            step_y = std::min(step_y, aoa_pos_step_limit_);
+            pos_offset_.y() += (diff_y > 0 ? step_y : -step_y);
+        }
+        
+        // z方向不迭代，保持不变
     }
 }
 

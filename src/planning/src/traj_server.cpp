@@ -109,7 +109,7 @@ int target_land_flag = 0;
 
 // 角速度控制相关参数
 double yaw_kp = 0.3;  // 偏航角速度控制增益
-double max_yaw_rate = 0.5;  // 最大偏航角速度限制 (rad/s)
+double max_yaw_rate = 0.8;  // 最大偏航角速度限制 (rad/s)
 
 double yaw_rate_pos_gain = 0.0;  // 角速度前馈增益
 double yaw_rate_vel_gain = 0.0;  // 角速度前馈增益
@@ -118,14 +118,14 @@ double yaw_rate_vel_gain = 0.0;  // 角速度前馈增益
 const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)1.3
 const double accel_dt = 0.01;  // 时间间隔 (s)
 
-double x_p = 0.2;
+double x_p = 0.3;
 double x_i = 0.83;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = 0.0;
 double integral_limit_x = 1.0;
 
-double y_p = 0.2;
+double y_p = 0.3;
 double y_i = 0.83;
 double y_d = 0.0;
 double y_d_max = 0.12;
@@ -701,14 +701,14 @@ void cmdCallback(const ros::TimerEvent &e) {
         target_vz = target_v.z();
       } else {
         if (mode_vins_z < target_p.z() + land_height_limit[0]){
-          targetz = mode_vins_z + 0.2 * (ros::Time::now() - mode_triger_time).toSec();
-          target_vz = target_v.z() + 0.2;
+          targetz = mode_vins_z + 0.1 * (ros::Time::now() - mode_triger_time).toSec();
+          target_vz = target_v.z() + 0.1;
           if (vins_p.z() > target_p.z() + land_height_limit[0]){
             reflight_complete = true;
           }
         } else if (mode_vins_z > target_p.z() + land_height_limit[1]){
-          targetz = mode_vins_z - 0.2 * (ros::Time::now() - mode_triger_time).toSec();
-          target_vz = target_v.z() - 0.2;
+          targetz = mode_vins_z - 0.1 * (ros::Time::now() - mode_triger_time).toSec();
+          target_vz = target_v.z() - 0.1;
           if (vins_p.z() < target_p.z() + land_height_limit[1]){
             reflight_complete = true;
           }
@@ -720,8 +720,8 @@ void cmdCallback(const ros::TimerEvent &e) {
     }
     else if (triger_mode == 2)
     {
-      targetz = mode_vins_z - 0.4 * (ros::Time::now() - mode_triger_time).toSec();
-      target_vz = -0.4;
+      targetz = mode_vins_z - 0.2 * (ros::Time::now() - mode_triger_time).toSec();
+      target_vz = -0.2;
       // targetz = vins_p.z() - 0.4;
       // target_vz = target_v.z() - 0.08;
     }
@@ -831,39 +831,39 @@ void cmdCallback(const ros::TimerEvent &e) {
 
   if(triger_mode == 2){
     // 降落过程中需要实时更新target信息
-    if (target_count == last_precise_target_count) {
-      if (target_receive_triger == 1){
-        target_receive_triger = 0;
-        target_lost_time = ros::Time::now();
-        target_lost_p.x() = cmd.position.x;
-        target_lost_p.y() = cmd.position.y;
-        target_lost_v.x() = cmd.velocity.x;
-        target_lost_v.y() = cmd.velocity.y;
-      }
+    // if (target_count == last_precise_target_count) {
+    //   if (target_receive_triger == 1){
+    //     target_receive_triger = 0;
+    //     target_lost_time = ros::Time::now();
+    //     target_lost_p.x() = cmd.position.x;
+    //     target_lost_p.y() = cmd.position.y;
+    //     target_lost_v.x() = cmd.velocity.x;
+    //     target_lost_v.y() = cmd.velocity.y;
+    //   }
 
-      // Landing模式下的velocity前馈控制
-      target_lost_v.x() += (target_vx - last_target_v.x()) * 0.75;
-      target_lost_v.y() += (target_vy - last_target_v.y()) * 0.75;
-      cmd.velocity.x = target_lost_v.x();
-      cmd.velocity.y = target_lost_v.y();
+    //   // Landing模式下的velocity前馈控制
+    //   target_lost_v.x() += (target_vx - last_target_v.x()) * 0.75;
+    //   target_lost_v.y() += (target_vy - last_target_v.y()) * 0.75;
+    //   cmd.velocity.x = target_lost_v.x();
+    //   cmd.velocity.y = target_lost_v.y();
 
-      target_lost_p.x() += cmd.velocity.x * accel_dt;
-      target_lost_p.y() += cmd.velocity.y * accel_dt;
+    //   target_lost_p.x() += cmd.velocity.x * accel_dt;
+    //   target_lost_p.y() += cmd.velocity.y * accel_dt;
 
-      cmd.position.x = target_lost_p.x();
-      cmd.position.y = target_lost_p.y();
-    }
-    else{
-      target_receive_triger = 1;
-    }
+    //   cmd.position.x = target_lost_p.x();
+    //   cmd.position.y = target_lost_p.y();
+    // }
+    // else{
+    //   target_receive_triger = 1;
+    // }
     
     // 丢失目标之后如果target_p变了怎么办？
-    if (flow_z < 0.13 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.5)
+    if (flow_z < 0.15 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.5)
         land_lock_timer += 1;
     else
         land_lock_timer = std::max(land_lock_timer - 0.5, 0.0);
 
-    if (land_lock_timer > 6)
+    if (land_lock_timer > 11)
     {
       quadrotor_msgs::TakeoffLand land;
       land.takeoff_land_cmd = 2;
@@ -1044,8 +1044,8 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
       if (hc14_offset_pos_ready && 
           hc14_offset_yaw_ready && 
           target_receive && 
-          (vins_p - target_top).norm() < 0.4 && 
-          angle_diff < 0.2)
+          (vins_p - target_top).norm() < 0.7 && 
+          angle_diff < 30.0/180.0 * M_PI)
       {
           geometry_msgs::PoseStamped mode_msg;
           mode_msg.header.stamp = ros::Time::now();
@@ -1057,14 +1057,14 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     else if (triger_mode == 1){
       if (hc14_offset_yaw_ready && 
           hc14_dog_pos_received &&
-          std::fabs(target_v.x() - vins_v.x()) < 0.2 && 
-          std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
-          std::fabs(target_p.x() - vins_p.x()) < 0.3 &&
-          std::fabs(target_p.y() - vins_p.y()) < 0.3 &&
+          std::fabs(target_v.x() - vins_v.x()) < 0.6 && 
+          std::fabs(target_v.y() - vins_v.y()) < 0.6 && 
+          std::fabs(target_p.x() - vins_p.x()) < 0.35 &&
+          std::fabs(target_p.y() - vins_p.y()) < 0.35 &&
           angle_diff < 20.0/180.0 * M_PI)
       {
         land_timer ++;
-        if (land_timer > 5)
+        if (land_timer > 10)
         {
           geometry_msgs::PoseStamped mode_msg;
           mode_msg.header.stamp = ros::Time::now();
@@ -1073,20 +1073,21 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           std::cout << "land_mode: true" << std::endl;
           land_timer = 0;
         }
-      }else if ((vins_p - target_top).norm() > 1.0){ // 可能遇到障碍时切回mpc避障
+      }else if (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 1.0){ // 可能遇到障碍时切回mpc避障
         geometry_msgs::PoseStamped mode_msg;
         mode_msg.header.stamp = ros::Time::now();
         mode_msg.pose.orientation.w = 0;
         mode_pub_.publish(mode_msg);
         std::cout << "precise_mode: false" << std::endl;
-        land_timer = std::max(0.0, land_timer - 1.0);
+        land_timer = std::max(0.0, land_timer - 0.5);
       }else{
-        land_timer = std::max(0.0, land_timer - 1.0);
+        land_timer = std::max(0.0, land_timer - 0.5);
       }
     }
     else if (triger_mode == 2){
-      if (!(std::fabs(target_v.x() - vins_v.x()) < 0.4 && 
-            std::fabs(target_v.y() - vins_v.y()) < 0.4 && 
+      if (!(
+            std::fabs(target_v.x() - vins_v.x()) < 0.8 && 
+            std::fabs(target_v.y() - vins_v.y()) < 0.8 && 
             std::fabs(target_p.x() - vins_p.x()) < 0.5 &&
             std::fabs(target_p.y() - vins_p.y()) < 0.5 &&
             angle_diff < 30.0/180.0 * M_PI))

@@ -11,7 +11,7 @@
 
 class KalmanFilter {
 public:
-    KalmanFilter(double process_noise = 0.01, double measurement_noise = 0.1);
+    KalmanFilter(double process_noise = 0.01, double measurement_noise = 0.02);
     void predict(double dt);
     void update(const Eigen::VectorXd& measurement);
     std::pair<Eigen::Vector3d, Eigen::Vector3d> filter(const Eigen::Vector3d& position, 
@@ -91,8 +91,6 @@ private:
     double aoa_pos_step_limit_;   // AOA位置偏移单次迭代上限（米）
     double camera_offset_;
     double aoa_min_distance_;
-    double aoa_min_distance_diff_;  // 两个anchor距离差的最小值，小于此值则认为距离差太小，不更新
-    double aoa_anchor_separation_;
     double flow_height_bias_;
     
     // 状态变量

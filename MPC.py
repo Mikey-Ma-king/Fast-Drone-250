@@ -42,7 +42,7 @@ target_vel_history = []  # 存储最近10个速度点
 target_vel_history_times = []  # 存储对应的时间戳
 
 
-land_height_limit = [1.2, 1.5]
+land_height_limit = [1.5, 1.8]
 
 class TargetFilter:
     def __init__(self, alpha=0.3, reset_interval=0.5):
@@ -430,7 +430,7 @@ mpc = DroneMPC(N = 15)
 # mpc.v_max = np.array([2.0, 2.0, 0.8])  # 速度限制
 # mpc.a_max = np.array([1.3, 1.3, 0.6])  # 加速度限制
 # mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
-mpc.v_max = np.array([1.2, 1.2, 0.8])  # 速度限制
+mpc.v_max = np.array([1.5, 1.5, 0.8])  # 速度限制
 mpc.a_max = np.array([1.0, 1.0, 0.6])  # 加速度限制
 mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
 # drone_state = np.array([0, 0, 0.4, 0, 0, 0])  # 初始状态 [px,py,pz,vx,vy,vz]
