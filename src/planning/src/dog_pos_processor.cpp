@@ -156,7 +156,7 @@ DogPosProcessor::DogPosProcessor()
       last_dog_yaw_time_(0.0),
       yaw_rate_filter_gain_(0.3),
       dog_yaw_rate_initialized_(false),
-      kf_(0.01, 0.1),
+      kf_(0.1, 0.01),
       kf_enabled_(true),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
@@ -180,7 +180,7 @@ DogPosProcessor::DogPosProcessor()
     camera_offset_ = 0.37;  // 关键参数，与traj_server一致
 
     // AOA相关参数
-    aoa_min_distance_ = 5.0;  // m
+    aoa_min_distance_ = 3.0;  // m
     flow_height_bias_ = 0.47;  // 与withdraw一致的零偏
 
     // 仿真模式：直接输出target_ekf为dog_pos_processed
@@ -410,7 +410,7 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
         last_dog_pos_timer_ = 0;
     } else {
         last_dog_pos_timer_++;
-        if (last_dog_pos_timer_ >= 5) {  // 连续5次没有新包才重置
+        if (last_dog_pos_timer_ >= 1) {  // 连续5次没有新包才重置
             raw_dog_pos_received_ = false;
         }
     }
@@ -425,7 +425,7 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
         last_target_loss_timer_ = 0;
     } else {
         last_target_loss_timer_++;
-        if (last_target_loss_timer_ >= 5) {  // 连续5次没有新包才重置
+        if (last_target_loss_timer_ >= 1) {  // 连续5次没有新包才重置
             target_receive_ = false;
         }
         last_target_timer_ = 0;

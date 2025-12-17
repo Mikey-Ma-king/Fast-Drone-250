@@ -32,9 +32,10 @@ int land_lock_timer = 0;
 ros::Publisher debug_pub_;  // 添加调试信息发布器
 ros::Time heartbeat_time_;
 
-// 保存上一次发布的命令速度和位置，用于加速度限制
+// 保存上一次发布的命令速度、位置和加速度，用于加速度和jerk限制
 Eigen::Vector3d last_cmd_velocity{0, 0, 0};
 Eigen::Vector3d last_cmd_position{0, 0, 0};
+Eigen::Vector3d last_cmd_acceleration{0, 0, 0};
 bool last_cmd_initialized = false;
 
 int triger_mode = -1;
@@ -114,9 +115,16 @@ double max_yaw_rate = 0.8;  // 最大偏航角速度限制 (rad/s)
 double yaw_rate_pos_gain = 0.0;  // 角速度前馈增益
 double yaw_rate_vel_gain = 0.0;  // 角速度前馈增益
 
-// 加速度限制参数
-const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)1.3
+// 加速度和jerk限制参数
+const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)
+const double max_jerk = 100.0;   // 最大jerk限制 (m/s^3)
 const double accel_dt = 0.01;  // 时间间隔 (s)
+
+// 降落速度参数（先快后慢）
+const double land_vel_max_high = -0.3;  // 高度较高时的最大下降速度 (m/s)
+const double land_vel_max_low = -0.13;   // 高度较低时的最大下降速度 (m/s)
+const double land_height_fast = 1.5;    // 高于此高度时使用快速下降 (m)
+const double land_height_slow = 0.6;    // 低于此高度时使用慢速下降 (m)
 
 double x_p = 0.3;
 double x_i = 0.83;
@@ -124,6 +132,7 @@ double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = 0.0;
 double integral_limit_x = 1.0;
+double integral_decay = 0.0;  // 积分衰减系数（1/s），防止积分 windup
 
 double y_p = 0.3;
 double y_i = 0.83;
@@ -646,7 +655,13 @@ void cmdCallback(const ros::TimerEvent &e) {
   // 目前mpc没有控制yaw，还使用目标的yaw
   target_yaw = hc14_dog_yaw;
 
-  angle_diff = target_yaw - vins_yaw;
+  if (triger_mode == 0 && (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 3.0)) {
+    // MPC模式：计算飞机对着狗的方向
+    double yaw_to_dog = std::atan2(target_p.y() - vins_p.y(), target_p.x() - vins_p.x());
+    angle_diff = yaw_to_dog - vins_yaw;
+  } else {
+    angle_diff = target_yaw - vins_yaw;
+  }
   if (angle_diff > M_PI) {
     angle_diff -= 2 * M_PI;
   } else if (angle_diff < -M_PI) {
@@ -720,10 +735,24 @@ void cmdCallback(const ros::TimerEvent &e) {
     }
     else if (triger_mode == 2)
     {
-      targetz = mode_vins_z - 0.2 * (ros::Time::now() - mode_triger_time).toSec();
-      target_vz = -0.2;
-      // targetz = vins_p.z() - 0.4;
-      // target_vz = target_v.z() - 0.08;
+      // 降落模式：根据高度差分段设置下降速度（先快后慢）
+      double height_diff = vins_p.z() - target_p.z();
+
+      double desired_vz;
+      if (height_diff >= land_height_fast) {
+        desired_vz = land_vel_max_high;  // 高度高，快降
+      } else if (height_diff <= land_height_slow) {
+        desired_vz = land_vel_max_low;   // 高度低，慢降
+      } else {
+        double ratio = (height_diff - land_height_slow) / (land_height_fast - land_height_slow);
+        desired_vz = land_vel_max_low + ratio * (land_vel_max_high - land_vel_max_low);
+      }
+    
+      target_vz =  target_v.z() + desired_vz;
+      targetz = vins_p.z() + desired_vz * (ros::Time::now() - mode_triger_time).toSec();
+      // targetz = vins_p.z() + desired_vz * accel_dt * 13;
+      // target_vz = target_v.z() + desired_vz;
+
     }
 
   }
@@ -858,12 +887,15 @@ void cmdCallback(const ros::TimerEvent &e) {
     // }
     
     // 丢失目标之后如果target_p变了怎么办？
-    if (flow_z < 0.15 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.5)
+    if (flow_z < 0.1 && flow_z > 0.0 && std::fabs(vins_p.z() - target_p.z()) < 0.5)
         land_lock_timer += 1;
     else
         land_lock_timer = std::max(land_lock_timer - 0.5, 0.0);
 
-    if (land_lock_timer > 11)
+    // if (land_lock_timer > 1 && 
+    //   std::fabs(vins_p.x() - target_p.x()) < 0.1 &&
+    //   std::fabs(vins_p.y() - target_p.y()) < 0.1)
+    if (land_lock_timer > 6)
     {
       quadrotor_msgs::TakeoffLand land;
       land.takeoff_land_cmd = 2;
@@ -879,40 +911,64 @@ void cmdCallback(const ros::TimerEvent &e) {
   cmd.velocity.x += v_offset_x * cos(vins_yaw) - v_offset_y * sin(vins_yaw);
   cmd.velocity.y += v_offset_x * sin(vins_yaw) + v_offset_y * cos(vins_yaw);
 
-  // 做上下限限制
+  // 做上下限限制（z 方向统一使用固定饱和，降落模式的速度规划已在上游计算）
   cmd.velocity.x = std::max(-1.5, std::min(1.5, cmd.velocity.x));
   cmd.velocity.y = std::max(-1.5, std::min(1.5, cmd.velocity.y));
   cmd.velocity.z = std::max(-0.8, std::min(0.8, cmd.velocity.z));
 
-  // 加速度限制：限制速度变化和位置变化（仅对 x、y 方向生效）
+  // 加速度和jerk限制：限制加速度变化（jerk）、速度变化（加速度）和位置变化（对 x、y、z 一起生效）
   if (last_cmd_initialized) {
-    // 限制 x、y 方向速度变化不超过 max_accel * dt，z 方向不做加速度限制
-    double max_vel_change = max_accel * accel_dt;
-    Eigen::Vector2d vel_change_xy(
+    // 计算期望的速度变化
+    Eigen::Vector3d vel_change(
         cmd.velocity.x - last_cmd_velocity.x(),
-        cmd.velocity.y - last_cmd_velocity.y());
-
-    if (vel_change_xy.norm() > max_vel_change) {
-      vel_change_xy = vel_change_xy.normalized() * max_vel_change;
+        cmd.velocity.y - last_cmd_velocity.y(),
+        cmd.velocity.z - last_cmd_velocity.z());
+    
+    // 计算期望的加速度（基于速度变化）
+    Eigen::Vector3d desired_accel = vel_change / accel_dt;
+    
+    // 计算加速度变化（jerk）
+    Eigen::Vector3d accel_change = desired_accel - last_cmd_acceleration;
+    double max_accel_change = max_jerk * accel_dt;
+    
+    // 限制jerk：限制加速度变化不超过 max_jerk * dt
+    if (accel_change.norm() > max_accel_change) {
+      accel_change = accel_change.normalized() * max_accel_change;
     }
-
-    cmd.velocity.x = last_cmd_velocity.x() + vel_change_xy.x();
-    cmd.velocity.y = last_cmd_velocity.y() + vel_change_xy.y();
-    // cmd.velocity.z 保持上一层控制逻辑的结果，仅做速度幅度饱和（上面已对 z 速度做过限幅）
-
-    // 限制位置变化：仅限制 x、y 方向，不能超过限制后的速度 * dt
-    Eigen::Vector2d pos_change_xy(
+    
+    // 得到限制后的加速度
+    Eigen::Vector3d limited_accel = last_cmd_acceleration + accel_change;
+    
+    // 限制加速度：限制加速度幅度不超过 max_accel
+    if (limited_accel.norm() > max_accel) {
+      limited_accel = limited_accel.normalized() * max_accel;
+    }
+    
+    // 基于限制后的加速度，计算限制后的速度变化
+    Eigen::Vector3d limited_vel_change = limited_accel * accel_dt;
+    
+    // 更新速度
+    cmd.velocity.x = last_cmd_velocity.x() + limited_vel_change.x();
+    cmd.velocity.y = last_cmd_velocity.y() + limited_vel_change.y();
+    cmd.velocity.z = last_cmd_velocity.z() + limited_vel_change.z();
+    
+    // 限制位置变化：不能超过限制后的速度 * dt
+    Eigen::Vector3d pos_change(
         cmd.position.x - last_cmd_position.x(),
-        cmd.position.y - last_cmd_position.y());
-    Eigen::Vector2d limited_vel_xy(cmd.velocity.x, cmd.velocity.y);
-    double max_pos_change_xy = limited_vel_xy.norm() * accel_dt * 3.5;
+        cmd.position.y - last_cmd_position.y(),
+        cmd.position.z - last_cmd_position.z());
+    Eigen::Vector3d limited_vel(cmd.velocity.x, cmd.velocity.y, cmd.velocity.z);
+    double max_pos_change = limited_vel.norm() * accel_dt * 3.5;
 
-    if (max_pos_change_xy > 0.001 && pos_change_xy.norm() > max_pos_change_xy) {
-      pos_change_xy = pos_change_xy.normalized() * max_pos_change_xy;
-      cmd.position.x = last_cmd_position.x() + pos_change_xy.x();
-      cmd.position.y = last_cmd_position.y() + pos_change_xy.y();
-      // cmd.position.z 不做加速度相关限制
+    if (max_pos_change > 0.001 && pos_change.norm() > max_pos_change) {
+      pos_change = pos_change.normalized() * max_pos_change;
+      cmd.position.x = last_cmd_position.x() + pos_change.x();
+      cmd.position.y = last_cmd_position.y() + pos_change.y();
+      cmd.position.z = last_cmd_position.z() + pos_change.z();
     }
+    
+    // 更新保存的加速度（用于下一次jerk限制）
+    last_cmd_acceleration = limited_accel;
   } else {
     last_cmd_initialized = true;
     cmd.velocity.x = vins_v.x();
@@ -921,6 +977,8 @@ void cmdCallback(const ros::TimerEvent &e) {
     cmd.position.x = vins_p.x();
     cmd.position.y = vins_p.y();
     cmd.position.z = vins_p.z();
+    // 初始化加速度为0
+    last_cmd_acceleration = Eigen::Vector3d(0, 0, 0);
   }
   
   // 更新保存的上一次命令值
@@ -938,9 +996,17 @@ void cmdCallback(const ros::TimerEvent &e) {
 
   last_precise_target_count = target_count;
 
-  intergral_targetx = std::max(std::min(intergral_targetx + accel_dt * (cmd.position.x - vins_p.x()), integral_limit_x), -integral_limit_x);
-  intergral_targety = std::max(std::min(intergral_targety + accel_dt * (cmd.position.y - vins_p.y()), integral_limit_y), -integral_limit_y);
-  intergral_targetz = std::max(std::min(intergral_targetz + accel_dt * (cmd.position.z - vins_p.z()), integral_limit_z), -integral_limit_z);
+  // 积分项带衰减，避免windup
+  double decay_factor = 1.0 - integral_decay * accel_dt;
+  decay_factor = std::max(0.0, std::min(1.0, decay_factor));  // 防止异常
+
+  intergral_targetx = intergral_targetx * decay_factor + accel_dt * (cmd.position.x - vins_p.x());
+  intergral_targety = intergral_targety * decay_factor + accel_dt * (cmd.position.y - vins_p.y());
+  intergral_targetz = intergral_targetz * decay_factor + accel_dt * (cmd.position.z - vins_p.z());
+
+  intergral_targetx = std::max(std::min(intergral_targetx, integral_limit_x), -integral_limit_x);
+  intergral_targety = std::max(std::min(intergral_targety, integral_limit_y), -integral_limit_y);
+  intergral_targetz = std::max(std::min(intergral_targetz, integral_limit_z), -integral_limit_z);
 
 
   // 发布调试信息到plotjuggler
@@ -1039,12 +1105,12 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     }
 
     // 处理triger_mode切换逻辑
-    Eigen::Vector3d target_top(target_p.x(), target_p.y(), std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z())));
     if (triger_mode == 0){
       if (hc14_offset_pos_ready && 
           hc14_offset_yaw_ready && 
           target_receive && 
-          (vins_p - target_top).norm() < 0.7 && 
+          vins_p.z() > target_p.z() + land_height_limit[0] &&
+          Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() < 0.7 && 
           angle_diff < 30.0/180.0 * M_PI)
       {
           geometry_msgs::PoseStamped mode_msg;
@@ -1064,7 +1130,7 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           angle_diff < 20.0/180.0 * M_PI)
       {
         land_timer ++;
-        if (land_timer > 10)
+        if (land_timer > 15)
         {
           geometry_msgs::PoseStamped mode_msg;
           mode_msg.header.stamp = ros::Time::now();
@@ -1073,7 +1139,9 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           std::cout << "land_mode: true" << std::endl;
           land_timer = 0;
         }
-      }else if (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 1.0){ // 可能遇到障碍时切回mpc避障
+      }else if (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 1.0 ||
+                std::fabs(target_v.x() - vins_v.x()) > 0.8 || 
+                std::fabs(target_v.y() - vins_v.y()) > 0.8){ // 可能遇到障碍时切回mpc避障
         geometry_msgs::PoseStamped mode_msg;
         mode_msg.header.stamp = ros::Time::now();
         mode_msg.pose.orientation.w = 0;
@@ -1086,10 +1154,11 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     }
     else if (triger_mode == 2){
       if (!(
-            std::fabs(target_v.x() - vins_v.x()) < 0.8 && 
-            std::fabs(target_v.y() - vins_v.y()) < 0.8 && 
+            std::fabs(target_v.x() - vins_v.x()) < 0.7 && 
+            std::fabs(target_v.y() - vins_v.y()) < 0.7 && 
             std::fabs(target_p.x() - vins_p.x()) < 0.5 &&
             std::fabs(target_p.y() - vins_p.y()) < 0.5 &&
+            vins_p.z() > target_p.z() - 0.2 &&
             angle_diff < 30.0/180.0 * M_PI))
       {
         geometry_msgs::PoseStamped mode_msg;
