@@ -13,6 +13,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, Float64
 from geometry_msgs.msg import PoseStamped
 from quadrotor_msgs.msg import TakeoffLand
+from scipy.spatial.transform import Rotation
 
 class KalmanFilter:
     """简单的卡尔曼滤波器，用于位置和速度滤波"""
@@ -135,14 +136,17 @@ class DogPosProcessor:
         self.pos_exceed_threshold = 0.3  # 30cm，位置超限阈值
         self.pos_exceed_max_count = 5  # 位置超限最大计数
         self.pos_filter_gain = 0.05  # 位置滤波增益
-        self.aoa_pos_filter_gain = 0.01  # AOA位置滤波增益（比pos_filter_gain小）
+        self.aoa_pos_filter_gain = 0.05  # AOA位置滤波增益（比pos_filter_gain小）
+        self.aoa_pos_step_limit = 0.02  # AOA单次迭代上限（米）
         
         # 前馈系数（参考traj_server.cpp）
         self.camera_offset = 0.37  # 关键参数，与traj_server一致
 
         # AOA相关参数
-        self.aoa_min_distance = 2.0  # m
-        self.aoa_min_distance_diff = 0.1  # 两个anchor距离差的最小值，小于此值则认为距离差太小，不更新
+        self.aoa_min_distance = 3.0  # m
+        
+        # 仿真模式：直接输出target_ekf为dog_pos_processed
+        self.simulate_mode = False
 
         # 最终输出的dog相关量存储
         self.final_dog_pos = np.array([0.0, 0.0, 0.0])  # 最终输出的dog位置
@@ -164,15 +168,11 @@ class DogPosProcessor:
         self.aoa_count = 0
         self.last_aoa_count = 0
         self.last_aoa_timer = 0
-        self.aoa_anchor1_distance = 0.0  # anchor 1距离
-        self.aoa_anchor1_angle = 0.0  # anchor 1角度
-        self.aoa_anchor2_distance = 0.0  # anchor 2距离
-        self.aoa_anchor2_angle = 0.0  # anchor 2角度
-        self.aoa_anchor_separation = 0.5  # 两个anchor之间的距离（60cm）
+        self.aoa_distance = 0.0  # AOA距离
+        self.aoa_angle = 0.0  # AOA角度（机体系下的yaw角）
 
         # 光流高度（用于修正AOA距离的垂直分量）
         self.flow_z = 0.0
-        self.flow_height_bias = 0.47  # 与withdraw一致的零偏
         
         
         # 原始数据
@@ -186,6 +186,7 @@ class DogPosProcessor:
         
         # VINS数据
         self.vins_yaw = 0.0
+        self.R_wb = np.eye(3)  # 世界系到机体系的旋转矩阵
         self.vins_pos = np.array([0.0, 0.0, 0.0])  # VINS位置
         self.vins_received = False
         self.vins_count = 0
@@ -199,6 +200,8 @@ class DogPosProcessor:
         self.target_count = 0
         self.last_target_count = 0
         self.last_target_timer = 0
+        self.last_target_loss_timer = 0
+        self.last_target_loss_count = 0
         
         # 初始化标志
         self.dog_vel_initialized = False
@@ -389,7 +392,7 @@ class DogPosProcessor:
     
     def target_callback(self, msg):
         """处理目标数据（来自read模块的target_ekf_odom）"""
-        # 从target_ekf_odom中提取yaw（假设在orientation.w中）
+        # 从target_ekf_odom中解算yaw（仅使用该消息的四元数）
         self.target_dog_yaw = msg.pose.pose.orientation.w
         
         # 从target_ekf_odom中提取位置
@@ -398,6 +401,35 @@ class DogPosProcessor:
         self.target_dog_pos[2] = msg.pose.pose.position.z
         
         self.target_count += 1
+
+        # 仿真模式：直接在目标回调中发布 dog_pos_processed
+        if self.simulate_mode:
+            out = Odometry()
+            out.header.stamp = rospy.Time.now()
+            out.header.frame_id = "world"
+
+            # 位置
+            out.pose.pose.position.x = msg.pose.pose.position.x
+            out.pose.pose.position.y = msg.pose.pose.position.y
+            out.pose.pose.position.z = msg.pose.pose.position.z
+
+            # ready flags
+            out.pose.pose.orientation.w = 1.0  # initialized_
+            out.pose.pose.orientation.x = 0.0
+            out.pose.pose.orientation.y = 1.0  # precise_pos_offset_ready_
+            out.pose.pose.orientation.z = 1.0  # precise_yaw_offset_ready_
+
+            # 速度
+            out.twist.twist.linear.x = msg.twist.twist.linear.x
+            out.twist.twist.linear.y = msg.twist.twist.linear.y
+            out.twist.twist.linear.z = msg.twist.twist.linear.z
+
+            # yaw 和 yaw_rate
+            out.twist.twist.angular.x = self.target_dog_yaw
+            out.twist.twist.angular.y = 0.0
+            out.twist.twist.angular.z = 0.0
+
+            self.dog_pos_pub.publish(out)
 
     def vins_callback(self, msg):
         """处理VINS数据"""
@@ -410,6 +442,11 @@ class DogPosProcessor:
         siny_cosp = 2.0 * (q_w * q_z + q_x * q_y)
         cosy_cosp = 1.0 - 2.0 * (q_y * q_y + q_z * q_z)
         self.vins_yaw = math.atan2(siny_cosp, cosy_cosp)
+        
+        # 提取VINS姿态
+        quat = [q_x, q_y, q_z, q_w]  # scipy使用xyzw格式
+        rot = Rotation.from_quat(quat)
+        self.R_wb = rot.as_matrix()  # 世界系到机体系的旋转矩阵
         
         # 提取VINS位置
         self.vins_pos[0] = msg.pose.pose.position.x
@@ -472,13 +509,16 @@ class DogPosProcessor:
         
         # 检查target_receive状态（模仿dog_pos_received的逻辑）
         if self.target_count != self.last_target_count:
-            self.target_receive = True
-            self.last_target_count = self.target_count
-            self.last_target_timer = 0
-        else:
             self.last_target_timer += 1
-            if self.last_target_timer >= 5:  # 连续5次没有新包才重置
+            if self.last_target_timer >= 1:
+                self.target_receive = True
+            self.last_target_count = self.target_count
+            self.last_target_loss_timer = 0
+        else:
+            self.last_target_loss_timer += 1
+            if self.last_target_loss_timer >= 1:  # 连续1次没有新包才重置
                 self.target_receive = False
+            self.last_target_timer = 0
         
         # 检查vins_received状态（模仿dog_pos_received的逻辑）
         if self.vins_count != self.last_vins_count:
@@ -512,7 +552,7 @@ class DogPosProcessor:
             else:
                 diff = 0.0  # 默认diff=0
             
-            self.yaw_offset = self.raw_dog_yaw - (self.vins_yaw + diff)
+            self.yaw_offset = self.normalize_angle(self.raw_dog_yaw - (self.vins_yaw + diff))
             
             # 位置偏移：raw_dog_pos
             # 将vins位置按照yaw_offset旋转后，加到pos_offset后面
@@ -533,13 +573,15 @@ class DogPosProcessor:
             
             # 自动进入预设模式
             self.initialized = True  # 初始化完成
+            self.precise_pos_offset_ready = True
+            self.precise_yaw_offset_ready = True
         
         # 处理hc14_dog数据：当同时收到target和hc14数据时，维护yaw和pos差值补偿；如果使用预设offset，则不进行迭代
         # 只有在初始化后且收到trigger后才进行offset迭代
-        if self.target_receive and self.raw_dog_pos_received:
+        if self.target_receive and self.raw_dog_pos_received and self.vins_received:
             # 正常的yaw offset迭代逻辑
-            current_yaw_offset = self.raw_dog_yaw - self.target_dog_yaw
-            yaw_offset_diff = current_yaw_offset - self.yaw_offset
+            current_yaw_offset = self.normalize_angle(self.raw_dog_yaw - self.target_dog_yaw)
+            yaw_offset_diff = self.normalize_angle(current_yaw_offset - self.yaw_offset)
             # 处理角度环绕问题
             yaw_offset_diff = self.normalize_angle(yaw_offset_diff)
             
@@ -583,22 +625,23 @@ class DogPosProcessor:
                 # 然后将加上前馈后的target_dog_pos旋转到狗坐标系
                 cos_yaw = math.cos(self.yaw_offset)
                 sin_yaw = math.sin(self.yaw_offset)
-                rotated_x = cos_yaw * target_dog_pos_with_ff[0] - sin_yaw * target_dog_pos_with_ff[1]
-                rotated_y = sin_yaw * target_dog_pos_with_ff[0] + cos_yaw * target_dog_pos_with_ff[1]
+                rotated_target = np.array([
+                    cos_yaw * target_dog_pos_with_ff[0] - sin_yaw * target_dog_pos_with_ff[1],
+                    sin_yaw * target_dog_pos_with_ff[0] + cos_yaw * target_dog_pos_with_ff[1],
+                    target_dog_pos_with_ff[2]
+                ])
                 
-                current_pos_offset = raw_dog_pos - np.array([rotated_x, rotated_y, self.target_dog_pos[2]])
+                current_pos_offset = raw_dog_pos - rotated_target
                 
                 # 对位置偏移进行线性滤波，防止突变
                 pos_offset_diff = current_pos_offset - self.pos_offset
-                self.pos_offset[0] += self.pos_filter_gain * pos_offset_diff[0]
-                self.pos_offset[1] += self.pos_filter_gain * pos_offset_diff[1]
-                self.pos_offset[2] += self.pos_filter_gain * pos_offset_diff[2]
+                self.pos_offset += self.pos_filter_gain * pos_offset_diff
                 
                 # 计算位置偏移差值
-                pos_offset_diff = np.linalg.norm(current_pos_offset - self.pos_offset)
+                pos_offset_diff_norm = np.linalg.norm(current_pos_offset - self.pos_offset)
                 
                 # 标记位置偏移是否精确ready
-                if pos_offset_diff < self.pos_stable_threshold:
+                if pos_offset_diff_norm < self.pos_stable_threshold:
                     if not self.precise_pos_offset_ready:
                         rospy.loginfo("precise_pos_offset_ready!")
                         if self.precise_yaw_offset_ready:
@@ -611,7 +654,7 @@ class DogPosProcessor:
                         self.filtered_yaw = 0.0
                     self.precise_pos_offset_ready = True
                 
-                if pos_offset_diff > self.pos_exceed_threshold:
+                if pos_offset_diff_norm > self.pos_exceed_threshold:
                     self.pos_exceed_timer += 1
                     if self.pos_exceed_timer > self.pos_exceed_max_count:
                         rospy.logwarn("pos_offset_diff too large!")
@@ -620,138 +663,218 @@ class DogPosProcessor:
                 else:
                     self.pos_exceed_timer = 0
         
-        # 维护AOA位置偏移（在具备vins、AOA数据和yaw ready时）
-        # 前提条件：yaw ready，然后根据两个anchor的距离和dog朝向进行三角定位
-        if self.precise_yaw_offset_ready and self.vins_received and self.aoa_received:
-            # 三角定位：设飞机在原点(0,0)，求解狗头和狗尾相对于飞机的坐标
-            # 使用raw_dog_yaw减去yaw_offset得到dog在世界坐标系中的yaw
-            dog_yaw = self.normalize_angle(self.raw_dog_yaw - self.yaw_offset)
-            cos_yaw = math.cos(dog_yaw)
-            sin_yaw = math.sin(dog_yaw)
-            
-            # 计算狗头到狗尾的向量（在世界坐标系中）
-            # 在dog坐标系中：狗头在(0.3, 0)，狗尾在(-0.3, 0)
-            # 狗头到狗尾的向量：(-0.6, 0)
-            # 旋转到世界坐标系：offset = R(yaw) * (-0.6, 0) = (-0.6*cos, -0.6*sin)
-            offset_x = cos_yaw * self.aoa_anchor_separation   # 狗头到狗尾的x分量
-            offset_y = sin_yaw * self.aoa_anchor_separation   # 狗头到狗尾的y分量
-            
-            d1 = self.aoa_anchor1_distance  # 狗头到飞机的距离
-            d2 = self.aoa_anchor2_distance  # 狗尾到飞机的距离
-            
-            # 设狗头坐标为(x1, y1)，狗尾坐标为(x2, y2)，飞机在(0, 0)
-            # 约束条件：
-            # 1. x1^2 + y1^2 = d1^2  (狗头到飞机的距离)
-            # 2. x2^2 + y2^2 = d2^2  (狗尾到飞机的距离)
-            # 3. (x1, y1) - (x2, y2) = (offset_x, offset_y)  (狗头到狗尾的向量)
-            #
-            # 从约束3：x2 = x1 - offset_x, y2 = y1 - offset_y
-            # 代入约束2：(x1 - offset_x)^2 + (y1 - offset_y)^2 = d2^2
-            # 展开：x1^2 - 2*x1*offset_x + offset_x^2 + y1^2 - 2*y1*offset_y + offset_y^2 = d2^2
-            # 利用约束1：d1^2 - 2*(x1*offset_x + y1*offset_y) + (offset_x^2 + offset_y^2) = d2^2
-            # 得到线性约束：x1*offset_x + y1*offset_y = (d1^2 - d2^2 + offset_norm^2) / 2
-            
-            # 线性约束：x1*offset_x + y1*offset_y = const
-            offset_norm_sq = self.aoa_anchor_separation**2  # 等于anchor_sep^2
-            linear_const = (d1**2 - d2**2 + offset_norm_sq) / 2.0
-            
-            # 结合圆的方程 x1^2 + y1^2 = d1^2 求解
-            # 设 x1 = a*offset_x - b*offset_y, y1 = a*offset_y + b*offset_x
-            # 代入线性约束：x1*offset_x + y1*offset_y = a*(offset_x^2 + offset_y^2) = a*offset_norm_sq = linear_const
-            # 所以 a = linear_const / offset_norm_sq
-            
-            a = linear_const / offset_norm_sq
-            
-            # 代入圆的方程：x1^2 + y1^2 = a^2*offset_norm_sq + b^2*offset_norm_sq = d1^2
-            # 所以 b^2 = (d1^2 - a^2*offset_norm_sq) / offset_norm_sq
-            b_sq = (d1**2 - a**2 * offset_norm_sq) / offset_norm_sq
-            if b_sq < 0:
+        # 维护AOA位置偏移（单距离单角度方案）
+        # 前提：yaw ready、vins可用、aoa可用，且飞机朝向与当前处理后狗位姿夹角在±30度内
+        if self.precise_yaw_offset_ready and self.vins_received and self.aoa_received and self.aoa_distance > self.aoa_min_distance:
+            # 角度限制：飞机朝向需面向当前processed dog pos的±30度
+            dog_vec = self.final_dog_pos - self.vins_pos
+            heading_to_dog = math.atan2(dog_vec[1], dog_vec[0])
+            heading_diff = self.normalize_angle(heading_to_dog - self.vins_yaw)
+            if abs(heading_diff) > math.pi / 3.0:  # 60度
                 return
-            
-            b = math.sqrt(b_sq)
-            
-            # 两个解
-            x1_1 = a * offset_x - b * offset_y
-            y1_1 = a * offset_y + b * offset_x
-            x1_2 = a * offset_x + b * offset_y
-            y1_2 = a * offset_y - b * offset_x
-            
-            # 计算对应的狗尾坐标
-            x2_1 = x1_1 - offset_x
-            y2_1 = y1_1 - offset_y
-            x2_2 = x1_2 - offset_x
-            y2_2 = y1_2 - offset_y
-            
-            # 对两个解分别计算狗中心和pos offset，选择pos offset更小的
-            # 解1：狗中心
-            dog_center_x_1 = (x1_1 + x2_1) / 2.0
-            dog_center_y_1 = (y1_1 + y2_1) / 2.0
-            aoa_dog_pos_1 = np.array([
-                self.vins_pos[0] + dog_center_x_1,
-                self.vins_pos[1] + dog_center_y_1,
-                self.vins_pos[2]
+        
+            height_diff = self.final_dog_pos[2] - self.vins_pos[2]
+            if self.aoa_distance < abs(height_diff):
+                return
+            aoa_distance_horizontal = math.sqrt(self.aoa_distance * self.aoa_distance - height_diff * height_diff)
+
+            # ========================== 坐标与几何问题定义 ==========================
+            #
+            # 目标：
+            #   已知：
+            #     - 飞机在世界系中的姿态 R_wb
+            #     - 飞机为原点
+            #     - 目标相对飞机的高度差 height_diff = Δz
+            #     - 目标相对飞机的水平距离 aoa_distance_horizontal
+            #     - 目标在机体系下的 yaw 角 aoa_angle
+            #
+            #   求：
+            #     - 目标在世界系下的位置 aoa_pos_world
+            #
+            # 约束条件：
+            #   1) 目标位于"yaw 平面"内（由 yaw 角确定）
+            #   2) 目标的 z 坐标等于 Δz
+            #   3) 目标的水平距离等于 aoa_distance_horizontal
+            #
+            # 几何思路：
+            #   - yaw 平面 ∩ 水平面 (z = Δz) 是一条直线
+            #   - 先在这条直线上找到"距离原点最近的点 p0"
+            #   - 再沿该直线方向走到满足水平距离约束的位置
+            # ======================================================================
+
+            # ========================== Step 0：基础向量 ==========================
+
+            # 世界系 z 轴单位向量
+            ez = np.array([0.0, 0.0, 1.0])
+
+            # 目标在机体系 yaw 平面中的 bearing 方向（x-y 平面内）
+            bearing_b = np.array([
+                math.cos(self.aoa_angle),
+                math.sin(self.aoa_angle),
+                0.0
             ])
-            
-            # 解2：狗中心
-            dog_center_x_2 = (x1_2 + x2_2) / 2.0
-            dog_center_y_2 = (y1_2 + y2_2) / 2.0
-            aoa_dog_pos_2 = np.array([
-                self.vins_pos[0] + dog_center_x_2,
-                self.vins_pos[1] + dog_center_y_2,
-                self.vins_pos[2]
-            ])
-            
-            # 计算当前pos offset
+
+            # ========================== Step 1：构造 yaw 平面的法向 ==========================
+            #
+            # yaw 平面定义：
+            #   - 经过飞机原点
+            #   - 包含 bearing_b 方向
+            #   - 包含机体系 z 轴
+            #
+            # 因此其法向（机体系）为：
+            n_b = np.cross(bearing_b, ez)
+
+            # 转到世界系
+            n_w = self.R_wb @ n_b
+
+            # 归一化，便于后续解释和数值稳定
+            n_w_norm = np.linalg.norm(n_w)
+            if n_w_norm < 1e-8:
+                return
+            n_w = n_w / n_w_norm
+
+            # ========================== Step 2：yaw 平面与水平面的交线 ==========================
+            #
+            # yaw 平面与水平面 (z = const) 的交集是一条直线
+            # 其方向等于两个平面法向的叉乘：
+            #   d ∥ n × ez
+            #
+            d_w = - np.cross(n_w, ez)
+
+            # 退化情况：yaw 平面与水平面平行（无唯一解）
+            if np.linalg.norm(d_w) < 1e-6:
+                # 此时仅凭水平距离无法唯一确定目标
+                return
+
+            # 该交线的单位方向（用于后续参数化）
+            d_hat = d_w / np.linalg.norm(d_w)
+
+            # |n × ez|，表示 yaw 平面对水平面的倾斜程度
+            d_norm = np.linalg.norm(d_w)
+
+            # ========================== Step 3：构造"最近点" p0 ==========================
+            #
+            # 目标：
+            #   在 yaw 平面 ∩ z = Δz 的直线上，
+            #   找到距离原点最近的点 p0。
+            #
+            # 思路：
+            #   - 从 p = Δz * ez 出发（只满足高度约束）
+            #   - 只能在"水平面内"修正，否则会破坏 z = Δz
+            #   - 修正方向必须取 yaw 平面法向 n 在水平面的投影
+            #
+
+            # yaw 平面法向在竖直方向的分量
+            n_z = np.dot(n_w, ez)
+
+            # yaw 平面法向在水平面的分量（正确的"拉回方向"）
+            n_h = n_w - n_z * ez
+
+            # |n_h|^2
+            n_h_sq = np.dot(n_h, n_h)
+
+            # 理论上此处不应退化（与 d_w 检查等价），保险起见
+            if n_h_sq < 1e-8:
+                return
+
+            # ========================== Step 4：一步写出 p0（闭式解） ==========================
+            #
+            # 构造未知点：
+            #   p0 = Δz * ez - α * n_h
+            #
+            # 其中 α 表示沿 n_h 方向修正的量。
+            # 将 p0 代入 yaw 平面方程：
+            #   n · p0 = 0
+            #
+            # 得到一元一次方程：
+            #   Δz * n_z - α * |n_h|^2 = 0
+            #
+            # 解得：
+            #   α = (n_z * Δz) / |n_h|^2
+            #
+            p0 = height_diff * ez - (n_z * height_diff / n_h_sq) * n_h
+
+            # ========================== Step 5：在 yaw 平面内施加水平距离约束 ==========================
+            #
+            # yaw 平面 ∩ z = Δz 是一条直线：
+            #   L(t) = p0 + t * d_hat
+            #
+            # 其中：
+            #   - p0     是该直线中距离原点最近的点
+            #   - d_hat  是直线的单位方向（完全在水平面内）
+            #
+            # 目标点必须满足：
+            #   || (p0 + t * d_hat)_h || = aoa_distance_horizontal
+            #
+
+            # p0 的水平分量
+            p0_h = np.array([p0[0], p0[1]])
+
+            # 最近点到原点的水平距离
+            p0_h_norm = np.linalg.norm(p0_h)
+
+            # 解二次方程前的判定
+            inside = aoa_distance_horizontal * aoa_distance_horizontal - p0_h_norm * p0_h_norm
+
+            if inside < 0.0:
+                # 水平圆与 yaw 平面直线无交点
+                return
+
+            # 沿 bearing 正方向的唯一物理解
+            t = math.sqrt(inside)
+
+            # 最终目标相对飞机的位置（世界系）
+            target_rel = p0 + t * d_hat
+
+            # ========================== Step 6：转为世界系绝对坐标 ==========================
+            #
+            # 前面所有计算均以飞机为原点
+            # 最终只在这里加上飞机世界系位置
+            #
+            aoa_pos_world = self.vins_pos + target_rel
+
+            # 将AOA估计位置旋转到狗坐标系（使用 yaw_offset）
+            cos_yaw = math.cos(self.yaw_offset)
+            sin_yaw = math.sin(self.yaw_offset)
+            rotated_aoa_x = cos_yaw * (aoa_pos_world[0] - self.vins_pos[0]) - sin_yaw * (aoa_pos_world[1] - self.vins_pos[1])
+            rotated_aoa_y = sin_yaw * (aoa_pos_world[0] - self.vins_pos[0]) + cos_yaw * (aoa_pos_world[1] - self.vins_pos[1])
+            rotated_aoa_pos = np.array([rotated_aoa_x, rotated_aoa_y, self.final_dog_pos[2]])
+
+            # 与raw_dog_pos比较，更新pos_offset
             raw_dog_pos = np.array([
                 self.raw_dog_pos.pose.pose.position.x,
                 self.raw_dog_pos.pose.pose.position.y,
                 self.raw_dog_pos.pose.pose.position.z
             ])
-            
-            # 将aoa_dog_pos旋转到狗坐标系
-            cos_yaw_offset = math.cos(self.yaw_offset)
-            sin_yaw_offset = math.sin(self.yaw_offset)
-            
-            # 解1的pos offset
-            rotated_aoa_x_1 = cos_yaw_offset * (aoa_dog_pos_1[0] - self.vins_pos[0]) - sin_yaw_offset * (aoa_dog_pos_1[1] - self.vins_pos[1])
-            rotated_aoa_y_1 = sin_yaw_offset * (aoa_dog_pos_1[0] - self.vins_pos[0]) + cos_yaw_offset * (aoa_dog_pos_1[1] - self.vins_pos[1])
-            rotated_aoa_pos_1 = np.array([rotated_aoa_x_1, rotated_aoa_y_1, aoa_dog_pos_1[2]])
-            current_pos_offset_1 = raw_dog_pos - rotated_aoa_pos_1
-            pos_offset_norm_1 = np.linalg.norm(current_pos_offset_1)
-            
-            # 解2的pos offset
-            rotated_aoa_x_2 = cos_yaw_offset * (aoa_dog_pos_2[0] - self.vins_pos[0]) - sin_yaw_offset * (aoa_dog_pos_2[1] - self.vins_pos[1])
-            rotated_aoa_y_2 = sin_yaw_offset * (aoa_dog_pos_2[0] - self.vins_pos[0]) + cos_yaw_offset * (aoa_dog_pos_2[1] - self.vins_pos[1])
-            rotated_aoa_pos_2 = np.array([rotated_aoa_x_2, rotated_aoa_y_2, aoa_dog_pos_2[2]])
-            current_pos_offset_2 = raw_dog_pos - rotated_aoa_pos_2
-            pos_offset_norm_2 = np.linalg.norm(current_pos_offset_2)
-            
-            # 选择pos offset更小的解
-            if pos_offset_norm_1 < pos_offset_norm_2:
-                current_pos_offset = current_pos_offset_1
-                selected_aoa_dog_pos = aoa_dog_pos_1
-            else:
-                current_pos_offset = current_pos_offset_2
-                selected_aoa_dog_pos = aoa_dog_pos_2
-            
-            # 发布AOA计算得到的dog位置（debug）
+            current_pos_offset = raw_dog_pos - rotated_aoa_pos
+
+            # Debug发布AOA估计位置
             aoa_debug_msg = Odometry()
             aoa_debug_msg.header.stamp = rospy.Time.now()
             aoa_debug_msg.header.frame_id = "world"
-            aoa_debug_msg.pose.pose.position.x = selected_aoa_dog_pos[0]
-            aoa_debug_msg.pose.pose.position.y = selected_aoa_dog_pos[1]
-            aoa_debug_msg.pose.pose.position.z = selected_aoa_dog_pos[2]
+            aoa_debug_msg.pose.pose.position.x = aoa_pos_world[0]
+            aoa_debug_msg.pose.pose.position.y = aoa_pos_world[1]
+            aoa_debug_msg.pose.pose.position.z = aoa_pos_world[2]
             self.aoa_dog_pos_debug_pub.publish(aoa_debug_msg)
-            
-            # 对位置偏移进行线性滤波，防止突变（使用AOA专用的滤波增益）
-            # 归一化更新量，防止一次改变过大
-            pos_offset_diff = current_pos_offset - self.pos_offset
 
-            # 归一化到单位向量，然后乘以滤波增益
-            pos_offset_diff_normalized = pos_offset_diff / max(np.linalg.norm(pos_offset_diff), 0.01)
-            self.pos_offset[0] += self.aoa_pos_filter_gain * pos_offset_diff_normalized[0]
-            self.pos_offset[1] += self.aoa_pos_filter_gain * pos_offset_diff_normalized[1]
-            self.pos_offset[2] += self.aoa_pos_filter_gain * pos_offset_diff_normalized[2]
+            # 位置偏移滤波：x和y分开迭代，z不迭代
+            pos_offset_diff = current_pos_offset - self.pos_offset
+            
+            # x方向迭代
+            diff_x = pos_offset_diff[0]
+            if abs(diff_x) > 1e-6:
+                step_x = self.aoa_pos_filter_gain * abs(diff_x)
+                step_x = min(step_x, self.aoa_pos_step_limit)
+                self.pos_offset[0] += step_x if diff_x > 0 else -step_x
+            
+            # y方向迭代
+            diff_y = pos_offset_diff[1]
+            if abs(diff_y) > 1e-6:
+                step_y = self.aoa_pos_filter_gain * abs(diff_y)
+                step_y = min(step_y, self.aoa_pos_step_limit)
+                self.pos_offset[1] += step_y if diff_y > 0 else -step_y
+            
+            # z方向不迭代，保持不变
 
 
     def publish_processed_dog_pos(self):
@@ -877,52 +1000,13 @@ class DogPosProcessor:
         self.dog_pos_pub.publish(msg)
 
     def aoa_callback(self, msg):
+        # 单距离 + 单角度：position.x = 距离，orientation.x = 相对于无人机朝向的角度
+        distance_raw = msg.pose.pose.position.x
+        angle_raw = msg.pose.pose.orientation.x
 
-        # 从新的消息格式中读取两个anchor的数据
-        # position.x = anchor 1的距离, position.y = anchor 2的距离
-        # orientation.x = anchor 1的角度, orientation.y = anchor 2的角度
-        anchor1_distance_raw = msg.pose.pose.position.x
-        anchor2_distance_raw = msg.pose.pose.position.y
-        anchor1_angle_raw = msg.pose.pose.orientation.x
-        anchor2_angle_raw = msg.pose.pose.orientation.y
-        
-        # 检查数据有效性
-        if anchor1_distance_raw < self.aoa_min_distance or anchor2_distance_raw < self.aoa_min_distance:
-            return
+        self.aoa_distance = distance_raw
+        self.aoa_angle = angle_raw
 
-        # 用光流高度修正：水平距离 = sqrt(max(0, d^2 - h^2))
-        height = (self.flow_z - self.flow_height_bias)
-        
-        # 修正anchor 1的距离
-        d1_2 = max(0.0, anchor1_distance_raw * anchor1_distance_raw - height * height)
-        self.aoa_anchor1_distance = math.sqrt(d1_2)
-        
-        # 修正anchor 2的距离
-        d2_2 = max(0.0, anchor2_distance_raw * anchor2_distance_raw - height * height)
-        self.aoa_anchor2_distance = math.sqrt(d2_2)
-        
-        # 如果两个anchor距离的差太小，直接返回，不更新
-        distance_diff = abs(self.aoa_anchor1_distance - self.aoa_anchor2_distance)
-        if distance_diff < self.aoa_min_distance_diff:
-            return
-        
-        # 如果两个anchor距离的差超过aoa_anchor_separation，重新从中心开始把差变成这个值
-        if distance_diff > self.aoa_anchor_separation:
-            # 计算中心距离
-            center_distance = (self.aoa_anchor1_distance + self.aoa_anchor2_distance) / 2.0
-            # 将差值限制为aoa_anchor_separation
-            half_separation = self.aoa_anchor_separation / 2.0
-            if self.aoa_anchor1_distance > self.aoa_anchor2_distance:
-                self.aoa_anchor1_distance = center_distance + half_separation
-                self.aoa_anchor2_distance = center_distance - half_separation
-            else:
-                self.aoa_anchor1_distance = center_distance - half_separation
-                self.aoa_anchor2_distance = center_distance + half_separation
-        
-        # 存储角度
-        self.aoa_anchor1_angle = anchor1_angle_raw
-        self.aoa_anchor2_angle = anchor2_angle_raw
-        
         self.aoa_count += 1
 
     def flow_callback(self, msg):

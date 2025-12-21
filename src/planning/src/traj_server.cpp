@@ -113,7 +113,7 @@ double yaw_kp = 0.3;  // 偏航角速度控制增益
 double max_yaw_rate = 0.8;  // 最大偏航角速度限制 (rad/s)
 
 double yaw_rate_pos_gain = 0.0;  // 角速度前馈增益
-double yaw_rate_vel_gain = 0.0;  // 角速度前馈增益
+double yaw_rate_vel_gain = 0.3;  // 角速度前馈增益
 
 // 加速度和jerk限制参数
 const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)

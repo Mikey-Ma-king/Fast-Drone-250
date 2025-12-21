@@ -128,6 +128,7 @@ DogPosProcessor::DogPosProcessor()
       last_raw_dog_pos_count_(0),
       last_dog_pos_timer_(0),
       vins_yaw_(0.0),
+      R_wb_(Eigen::Matrix3d::Identity()),
       vins_pos_(Eigen::Vector3d::Zero()),
       vins_received_(false),
       vins_count_(0),
@@ -181,7 +182,6 @@ DogPosProcessor::DogPosProcessor()
 
     // AOA相关参数
     aoa_min_distance_ = 3.0;  // m
-    flow_height_bias_ = 0.47;  // 与withdraw一致的零偏
 
     // 仿真模式：直接输出target_ekf为dog_pos_processed
     simulate_mode_ = false;
@@ -352,6 +352,9 @@ void DogPosProcessor::vinsCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     double cosy_cosp = 1.0 - 2.0 * (q_y * q_y + q_z * q_z);
     vins_yaw_ = std::atan2(siny_cosp, cosy_cosp);
     
+    // 提取VINS姿态
+    R_wb_ = Eigen::Quaterniond(q_w, q_x, q_y, q_z).toRotationMatrix();
+
     // 提取VINS位置
     vins_pos_.x() = msg->pose.pose.position.x;
     vins_pos_.y() = msg->pose.pose.position.y;
@@ -418,7 +421,7 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
     // 检查target_receive状态（模仿dog_pos_received的逻辑）
     if (target_count_ != last_target_count_) {
         last_target_timer_ ++;
-        if (last_target_timer_ >= 5) {
+        if (last_target_timer_ >= 1) {
             target_receive_ = true;
         }
         last_target_count_ = target_count_;
@@ -598,29 +601,194 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
     
     // 维护AOA位置偏移（单距离单角度方案）
     // 前提：yaw ready、vins可用、aoa可用，且飞机朝向与当前处理后狗位姿夹角在±30度内
-    if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_) {
+    if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_ && aoa_distance_ > aoa_min_distance_) {
         // 角度限制：飞机朝向需面向当前processed dog pos的±30度
         Eigen::Vector3d dog_vec = final_dog_pos_ - vins_pos_;
         double heading_to_dog = std::atan2(dog_vec.y(), dog_vec.x());
         double heading_diff = normalizeAngle(heading_to_dog - vins_yaw_);
-        if (std::abs(heading_diff) > M_PI / 6.0) {  // 30度
+        if (std::abs(heading_diff) > M_PI / 4.0) {  // 45度
+            return;
+        }
+    
+        double height_diff = final_dog_pos_.z() - vins_pos_.z();
+        if (aoa_distance_ < std::abs(height_diff)) {
+            return;
+        }
+        double aoa_distance_horizontal = std::sqrt(aoa_distance_ * aoa_distance_ - height_diff * height_diff);
+
+        // ========================== 坐标与几何问题定义 ==========================
+        //
+        // 目标：
+        //   已知：
+        //     - 飞机在世界系中的姿态 R_wb_
+        //     - 飞机为原点
+        //     - 目标相对飞机的高度差 height_diff = Δz
+        //     - 目标相对飞机的水平距离 aoa_distance_horizontal
+        //     - 目标在机体系下的 yaw 角 aoa_angle_
+        //
+        //   求：
+        //     - 目标在世界系下的位置 aoa_pos_world
+        //
+        // 约束条件：
+        //   1) 目标位于“yaw 平面”内（由 yaw 角确定）
+        //   2) 目标的 z 坐标等于 Δz
+        //   3) 目标的水平距离等于 aoa_distance_horizontal
+        //
+        // 几何思路：
+        //   - yaw 平面 ∩ 水平面 (z = Δz) 是一条直线
+        //   - 先在这条直线上找到“距离原点最近的点 p0”
+        //   - 再沿该直线方向走到满足水平距离约束的位置
+        // ======================================================================
+
+
+        // ========================== Step 0：基础向量 ==========================
+
+        // 世界系 z 轴单位向量
+        Eigen::Vector3d ez(0.0, 0.0, 1.0);
+
+        // 目标在机体系 yaw 平面中的 bearing 方向（x-y 平面内）
+        Eigen::Vector3d bearing_b(
+            std::cos(aoa_angle_),
+            std::sin(aoa_angle_),
+            0.0
+        );
+
+
+        // ========================== Step 1：构造 yaw 平面的法向 ==========================
+        //
+        // yaw 平面定义：
+        //   - 经过飞机原点
+        //   - 包含 bearing_b 方向
+        //   - 包含机体系 z 轴
+        //
+        // 因此其法向（机体系）为：
+        Eigen::Vector3d n_b = bearing_b.cross(ez);
+
+        // 转到世界系
+        Eigen::Vector3d n_w = R_wb_ * n_b;
+
+        // 归一化，便于后续解释和数值稳定
+        n_w.normalize();
+
+
+        // ========================== Step 2：yaw 平面与水平面的交线 ==========================
+        //
+        // yaw 平面与水平面 (z = const) 的交集是一条直线
+        // 其方向等于两个平面法向的叉乘：
+        //   d ∥ n × ez
+        //
+        Eigen::Vector3d d_w = - n_w.cross(ez);
+
+        // 退化情况：yaw 平面与水平面平行（无唯一解）
+        if (d_w.norm() < 1e-6)
+        {
+            // 此时仅凭水平距离无法唯一确定目标
             return;
         }
 
-        // 利用单个距离和相对角度估计狗的世界坐标
-        double global_yaw_to_dog = normalizeAngle(vins_yaw_ + aoa_angle_);
-        Eigen::Vector3d aoa_pos_world(
-            vins_pos_.x() + aoa_distance_ * std::cos(global_yaw_to_dog),
-            vins_pos_.y() + aoa_distance_ * std::sin(global_yaw_to_dog),
-            vins_pos_.z()
-        );
+        // 该交线的单位方向（用于后续参数化）
+        Eigen::Vector3d d_hat = d_w.normalized();
+
+
+        // ========================== Step 3：构造“最近点” p0 ==========================
+        //
+        // 目标：
+        //   在 yaw 平面 ∩ z = Δz 的直线上，
+        //   找到距离原点最近的点 p0。
+        //
+        // 思路：
+        //   - 从 p = Δz * ez 出发（只满足高度约束）
+        //   - 只能在“水平面内”修正，否则会破坏 z = Δz
+        //   - 修正方向必须取 yaw 平面法向 n 在水平面的投影
+        //
+
+        // yaw 平面法向在竖直方向的分量
+        double n_z = n_w.dot(ez);
+
+        // yaw 平面法向在水平面的分量（正确的“拉回方向”）
+        Eigen::Vector3d n_h = n_w - n_z * ez;
+
+        // |n_h|^2
+        double n_h_sq = n_h.squaredNorm();
+
+        // 理论上此处不应退化（与 d_w 检查等价），保险起见
+        if (n_h_sq < 1e-8)
+        {
+            return;
+        }
+
+
+        // ========================== Step 4：一步写出 p0（闭式解） ==========================
+        //
+        // 构造未知点：
+        //   p0 = Δz * ez - α * n_h
+        //
+        // 其中 α 表示沿 n_h 方向修正的量。
+        // 将 p0 代入 yaw 平面方程：
+        //   n · p0 = 0
+        //
+        // 得到一元一次方程：
+        //   Δz * n_z - α * |n_h|^2 = 0
+        //
+        // 解得：
+        //   α = (n_z * Δz) / |n_h|^2
+        //
+        Eigen::Vector3d p0 =
+            height_diff * ez
+            - (n_z * height_diff / n_h_sq) * n_h;
+
+
+        // ========================== Step 5：在 yaw 平面内施加水平距离约束 ==========================
+        //
+        // yaw 平面 ∩ z = Δz 是一条直线：
+        //   L(t) = p0 + t * d_hat
+        //
+        // 其中：
+        //   - p0     是该直线中距离原点最近的点
+        //   - d_hat  是直线的单位方向（完全在水平面内）
+        //
+        // 目标点必须满足：
+        //   || (p0 + t * d_hat)_h || = aoa_distance_horizontal
+        //
+
+        // p0 的水平分量
+        Eigen::Vector2d p0_h(p0.x(), p0.y());
+
+        // 最近点到原点的水平距离
+        double p0_h_norm = p0_h.norm();
+
+        // 解二次方程前的判定
+        double inside =
+            aoa_distance_horizontal * aoa_distance_horizontal
+            - p0_h_norm * p0_h_norm;
+
+        if (inside < 0.0)
+        {
+            // 水平圆与 yaw 平面直线无交点
+            return;
+        }
+
+        // 沿 bearing 正方向的唯一物理解
+        double t = std::sqrt(inside);
+
+        // 最终目标相对飞机的位置（世界系）
+        Eigen::Vector3d target_rel = p0 + t * d_hat;
+
+
+        // ========================== Step 6：转为世界系绝对坐标 ==========================
+        //
+        // 前面所有计算均以飞机为原点
+        // 最终只在这里加上飞机世界系位置
+        //
+        Eigen::Vector3d aoa_pos_world = vins_pos_ + target_rel;
+
 
         // 将AOA估计位置旋转到狗坐标系（使用 yaw_offset_）
         double cos_yaw = std::cos(yaw_offset_);
         double sin_yaw = std::sin(yaw_offset_);
         double rotated_aoa_x = cos_yaw * (aoa_pos_world.x() - vins_pos_.x()) - sin_yaw * (aoa_pos_world.y() - vins_pos_.y());
         double rotated_aoa_y = sin_yaw * (aoa_pos_world.x() - vins_pos_.x()) + cos_yaw * (aoa_pos_world.y() - vins_pos_.y());
-        Eigen::Vector3d rotated_aoa_pos(rotated_aoa_x, rotated_aoa_y, aoa_pos_world.z());
+        Eigen::Vector3d rotated_aoa_pos(rotated_aoa_x, rotated_aoa_y, final_dog_pos_.z());
 
         // 与raw_dog_pos比较，更新pos_offset_
         Eigen::Vector3d raw_dog_pos(
@@ -788,18 +956,10 @@ void DogPosProcessor::aoaCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     // 单距离 + 单角度：position.x = 距离，orientation.x = 相对于无人机朝向的角度
     double distance_raw = msg->pose.pose.position.x;
     double angle_raw = msg->pose.pose.orientation.x;
-    
-    // 检查距离有效性
-    if (distance_raw < aoa_min_distance_) {
-        return;
-    }
 
-    // 用光流高度修正：水平距离 = sqrt(max(0, d^2 - h^2))
-    double height = (flow_z_ - flow_height_bias_);
-    double d_sq = std::max(0.0, distance_raw * distance_raw - height * height);
-    aoa_distance_ = std::sqrt(d_sq);
-
+    aoa_distance_ = distance_raw;
     aoa_angle_ = angle_raw;
+
     aoa_count_++;
 }
 

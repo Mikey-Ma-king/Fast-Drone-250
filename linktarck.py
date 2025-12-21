@@ -168,6 +168,10 @@ def main():
     anchor1_distance_filtered = None
     anchor2_distance_filtered = None
     filter_gain = 0.3  # 滤波增益，0.3表示新值权重30%，旧值权重70%
+    
+    # 发布频率限制：最多5Hz（每0.2秒最多发布一次）
+    last_publish_time = 0.0
+    min_publish_interval = 0.2  # 最小发布间隔（秒）
 
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=TIMEOUT)
@@ -240,23 +244,27 @@ def main():
                             anchor1_distance_filtered = (1.0 - filter_gain) * anchor1_distance_filtered + filter_gain * distance
                         anchor1_data = {"distance": anchor1_distance_filtered, "angle": angle_rad}
                 if anchor1_data is not None:
-                    msg = Odometry()
-                    msg.header.stamp = rospy.Time.now()
-                    msg.header.frame_id = "aoa_tag"
+                    # 检查是否距离上次发布时间已经超过0.2秒
+                    current_time = time.time()
+                    if current_time - last_publish_time >= min_publish_interval:
+                        msg = Odometry()
+                        msg.header.stamp = rospy.Time.now()
+                        msg.header.frame_id = "aoa_tag"
 
-                    # **position.x = anchor 1的距离, position.y = anchor 2的距离**
-                    msg.pose.pose.position.x = anchor1_data["distance"]
-                    
-                    # **orientation.w = anchor 1的角度, orientation.x = anchor 2的角度**
-                    msg.pose.pose.orientation.x = anchor1_data["angle"]
+                        # **position.x = anchor 1的距离, position.y = anchor 2的距离**
+                        msg.pose.pose.position.x = anchor1_data["distance"]
+                        
+                        # **orientation.w = anchor 1的角度, orientation.x = anchor 2的角度**
+                        msg.pose.pose.orientation.x = anchor1_data["angle"]
 
-                    pub.publish(msg)
-                    pub_count += 1
-                    
-                    if (time.time() - start_time) > 4:
-                        print(f"linktrack:Hz:{int(pub_count/4)},Anchor1:dist={anchor1_data['distance']:.3f},angle={int(math.degrees(anchor1_data['angle']))}")
-                        start_time = time.time()
-                        pub_count = 0
+                        pub.publish(msg)
+                        pub_count += 1
+                        last_publish_time = current_time  # 更新上次发布时间
+                        
+                        if (time.time() - start_time) > 4:
+                            print(f"linktrack:Hz:{int(pub_count/4)},Anchor1:dist={anchor1_data['distance']:.3f},angle={int(math.degrees(anchor1_data['angle']))}")
+                            start_time = time.time()
+                            pub_count = 0
                     
                     # 清空数据，等待下一帧
                     anchor1_data = None

@@ -115,6 +115,7 @@ private:
     
     // VINS数据
     double vins_yaw_;
+    Eigen::Matrix3d R_wb_;
     Eigen::Vector3d vins_pos_;
     bool vins_received_;
     unsigned int vins_count_;
