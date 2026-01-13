@@ -145,24 +145,24 @@ const double accel_dt = 0.01;  // 时间间隔 (s)
 const double land_vel_max_high = -0.3;  // 高度较高时的最大下降速度 (m/s)
 const double land_vel_max_low = -0.13;   // 高度较低时的最大下降速度 (m/s)
 const double land_height_fast = 1.5;    // 高于此高度时使用快速下降 (m)
-const double land_height_slow = 0.8;    // 低于此高度时使用慢速下降 (m)
+const double land_height_slow = 0.6;    // 低于此高度时使用慢速下降 (m)
 
 double x_p = 0.3;
-double x_i = 0.83;
+double x_i = 1.1;
 double x_d = 0.0;
 double x_d_max = 0.12;
 double v_offset_x = 0.0;
 double integral_limit_x = 1.0;
 double integral_decay = 0.0;  // 积分衰减系数（1/s），防止积分 windup
-double acc_gain_x = 0.35; // 0.6
+double acc_gain_x = 0.6; // 0.6
 
 double y_p = 0.3;
-double y_i = 0.83;
+double y_i = 1.1;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
 double integral_limit_y = 1.0;
-double acc_gain_y = 0.35; // 0.6
+double acc_gain_y = 0.6; // 0.6
 
 double z_p = 0.25;
 double z_i = 0.0;
@@ -171,12 +171,12 @@ double z_d_max = 0.1;
 double integral_limit_z = 0.1;
 
 double mpc_x_p = 0.3;
-double mpc_x_i = 0.83;
+double mpc_x_i = 1.1;
 double mpc_x_d = 0.0;
 double mpc_x_d_max = 0.12;
 
 double mpc_y_p = 0.3;
-double mpc_y_i = 0.83;
+double mpc_y_i = 1.1;
 double mpc_y_d = 0.0;
 double mpc_y_d_max = 0.12;
 
@@ -678,6 +678,11 @@ void cmdCallback(const ros::TimerEvent &e) {
   // 目前mpc没有控制yaw，还使用目标的yaw
   target_yaw = hc14_dog_yaw;
 
+  static double distance = 0;
+  distance = Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm();
+  std::cout << "distance：" << distance << std::endl;
+  logDistance(distance, vins_p.z());
+
   if ((triger_mode == 0) && (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 3.0)) {
     // MPC模式：计算飞机对着狗的方向
     double yaw_to_dog = std::atan2(target_p.y() - vins_p.y(), target_p.x() - vins_p.x());
@@ -1109,7 +1114,7 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
         if (last_target_loss_timer >= 5) {  // 连续5次没有新包才重置
             target_receive = false;
         }
-        last_target_timer -= 0.2;
+        last_target_timer = 0;
     }
     
     // 检查dog_pos_received状态（模仿target_count的逻辑）
@@ -1136,7 +1141,7 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           hc14_offset_yaw_ready && 
           target_receive && 
           vins_p.z() > target_p.z() + land_height_limit[0] &&
-          Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() < 0.8 && 
+          Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() < 0.7 && 
           angle_diff < 30.0/180.0 * M_PI)
       {
           geometry_msgs::PoseStamped mode_msg;
@@ -1148,15 +1153,16 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     }
     else if (triger_mode == 1){
       if (hc14_offset_yaw_ready && 
-          hc14_offset_pos_ready &&
-          std::fabs(target_v.x() - vins_v.x()) < 0.2 && 
-          std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
-          std::fabs(target_p.x() - vins_p.x()) < 0.4 &&
-          std::fabs(target_p.y() - vins_p.y()) < 0.4 &&
-          angle_diff < 20.0/180.0 * M_PI)
+          hc14_dog_pos_received &&
+          std::fabs(target_v.x() - vins_v.x()) < 0.6 && 
+          std::fabs(target_v.y() - vins_v.y()) < 0.6 && 
+          std::fabs(target_p.x() - vins_p.x()) < 0.35 &&
+          std::fabs(target_p.y() - vins_p.y()) < 0.35 &&
+          angle_diff < 20.0/180.0 * M_PI &&
+        false)
       {
         land_timer ++;
-        if (land_timer > 5)
+        if (land_timer > 15)
         {
           geometry_msgs::PoseStamped mode_msg;
           mode_msg.header.stamp = ros::Time::now();
@@ -1180,13 +1186,11 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     }
     else if (triger_mode == 2){
       if (!(
-            hc14_offset_pos_ready &&
-            hc14_offset_yaw_ready &&
-            std::fabs(target_v.x() - vins_v.x()) < 0.5 && 
-            std::fabs(target_v.y() - vins_v.y()) < 0.5 && 
-            std::fabs(target_p.x() - vins_p.x()) < 0.55 &&
-            std::fabs(target_p.y() - vins_p.y()) < 0.55 &&
-            vins_p.z() > target_p.z() - 0.1 &&
+            std::fabs(target_v.x() - vins_v.x()) < 0.7 && 
+            std::fabs(target_v.y() - vins_v.y()) < 0.7 && 
+            std::fabs(target_p.x() - vins_p.x()) < 0.5 &&
+            std::fabs(target_p.y() - vins_p.y()) < 0.5 &&
+            vins_p.z() > target_p.z() - 0.2 &&
             angle_diff < 30.0/180.0 * M_PI))
       {
         geometry_msgs::PoseStamped mode_msg;
@@ -1261,7 +1265,7 @@ int main(int argc, char **argv) {
   ros::Subscriber AOA_sub_ = nh.subscribe("/AOA_Tag_data", 10, AOA_callback);
   ros::Subscriber flow_sub_ = nh.subscribe("/flow_data", 10, flow_callback);
 
-  // ros::Subscriber sub = nh.subscribe("/pid", 1000, pid_callback);
+  ros::Subscriber sub = nh.subscribe("/pid", 1000, pid_callback);
 
   ros::Subscriber traj_sub_ = nh.subscribe<nav_msgs::Path>("/drone2/planning/traj", 10, traj_callback);
   ros::Subscriber traj_v_sub_ = nh.subscribe<nav_msgs::Path>("/traj_v", 10, traj_v_callback);

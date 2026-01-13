@@ -1101,8 +1101,8 @@ void read::reda(ros::NodeHandle& nh) {
                     // 基于VINS的机体朝向，将最终位置向机体左侧偏移2cm
                     // 从VINS旋转矩阵R1获取yaw（机体朝向，世界系）
                     double yaw_vins = std::atan2(R1(1,0), R1(0,0));
-                    filtered_x -= 0.00 * std::sin(yaw_vins);
-                    filtered_y += 0.00 * std::cos(yaw_vins);
+                    // filtered_x -= 0.00 * std::sin(yaw_vins);
+                    // filtered_y += 0.00 * std::cos(yaw_vins);
 
                     odom_msg.pose.pose.position.x = round_to_decimal_places(filtered_x, 2);
                     odom_msg.pose.pose.position.y = round_to_decimal_places(filtered_y, 2);

@@ -35,6 +35,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "gra", gra);
 	read_essential_param(nh, "ctrl_freq_max", ctrl_freq_max);
 	read_essential_param(nh, "use_bodyrate_ctrl", use_bodyrate_ctrl);
+	read_essential_param(nh, "use_so3_control", use_so3_control);
 	read_essential_param(nh, "max_manual_vel", max_manual_vel);
 	read_essential_param(nh, "max_angle", max_angle);
 	read_essential_param(nh, "low_voltage", low_voltage);

@@ -77,6 +77,13 @@ private:
 
   double computeDesiredCollectiveThrustSignal(const Eigen::Vector3d &des_acc);
   double fromQuaternion2yaw(Eigen::Quaterniond q);
+  
+  // SE(3)控制相关函数
+  void calculateControlSO3(const Desired_State_t &des,
+                           const Odom_Data_t &odom,
+                           const Imu_Data_t &imu,
+                           Controller_Output_t &u,
+                           const Eigen::Vector3d &des_acc);
 };
 
 

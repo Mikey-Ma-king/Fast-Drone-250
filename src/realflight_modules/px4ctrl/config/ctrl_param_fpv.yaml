@@ -2,11 +2,12 @@
 # ⭐⭐⭐  Set parameters carefully for satisfied performance!   ⭐⭐⭐ #
 #########################################################################
 
-mass        : 1.6 # kg 
+mass        : 1.5 # kg 
 gra         : 9.81 
 pose_solver : 1     # 0:From ZhepeiWang (drag & less singular) 1:From ZhepeiWang, 2:From rotor-drag    
 ctrl_freq_max   : 100.0
 use_bodyrate_ctrl: false
+use_so3_control: true  # 是否使用SE(3)控制（true: SE(3)控制, false: 欧拉角控制）
 max_manual_vel: 1.0
 max_angle: 30  # Attitude angle limit in degree. A negative value means no limit.
 low_voltage: 13.2 # 4S battery

@@ -54,6 +54,7 @@ private:
     
     // 内部函数
     void updateDogYawRate(double delta_yaw);
+    void updateDogAcc(const Eigen::Vector3d& delta_vel);
     void publishProcessedDogPos();
     
     // ROS节点
@@ -153,10 +154,17 @@ private:
     
     // 速度相关
     bool dog_vel_initialized_;
-    double dog_yaw_rate_;
+    double final_dog_yaw_rate_;
     double last_dog_yaw_time_;
     double yaw_rate_filter_gain_;
     bool dog_yaw_rate_initialized_;
+    Eigen::Vector3d last_dog_vel_;  // 上一次滤波后的速度，用于计算加速度
+    
+    // 加速度相关
+    Eigen::Vector3d final_dog_acc_;
+    double last_dog_vel_time_;
+    double acc_filter_gain_;
+    bool dog_acc_initialized_;
     
     // 卡尔曼滤波
     KalmanFilter kf_;

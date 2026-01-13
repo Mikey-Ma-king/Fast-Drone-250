@@ -153,10 +153,15 @@ DogPosProcessor::DogPosProcessor()
       final_dog_vel_(Eigen::Vector3d::Zero()),
       final_dog_yaw_(0.0),
       dog_vel_initialized_(false),
-      dog_yaw_rate_(0.0),
+      final_dog_yaw_rate_(0.0),
       last_dog_yaw_time_(0.0),
       yaw_rate_filter_gain_(0.3),
       dog_yaw_rate_initialized_(false),
+      last_dog_vel_(Eigen::Vector3d::Zero()),
+      final_dog_acc_(Eigen::Vector3d::Zero()),
+      last_dog_vel_time_(0.0),
+      acc_filter_gain_(0.3),
+      dog_acc_initialized_(false),
       kf_(0.1, 0.01),
       kf_enabled_(true),
       yaw_filter_gain_kf_(0.3),
@@ -173,7 +178,7 @@ DogPosProcessor::DogPosProcessor()
     pos_stable_threshold_ = 0.05;  // 5cm，位置稳定阈值
     pos_exceed_threshold_ = 0.3;  // 30cm，位置超限阈值
     pos_exceed_max_count_ = 5;  // 位置超限最大计数
-    pos_filter_gain_ = 0.05;  // 位置滤波增益
+    pos_filter_gain_ = 0.2;  // 位置滤波增益
     aoa_pos_filter_gain_ = 0.05;  // AOA位置滤波增益（比pos_filter_gain小）
     aoa_pos_step_limit_ = 0.02;   // AOA单次迭代上限（米）
     
@@ -183,7 +188,7 @@ DogPosProcessor::DogPosProcessor()
     // AOA相关参数
     aoa_min_distance_ = 3.0;  // m
 
-    // 仿真模式：直接输出target_ekf为dog_pos_processed
+    // 仿真模式：camera_offset为0
     simulate_mode_ = false;
     
     // 发布者 - 使用Odometry格式
@@ -213,6 +218,10 @@ DogPosProcessor::DogPosProcessor()
     timer_ = nh_.createTimer(ros::Duration(0.05), &DogPosProcessor::processCallback, this);
     status_timer_ = nh_.createTimer(ros::Duration(0.1), &DogPosProcessor::statusCheckCallback, this);  // 100ms检查状态
     
+    if (simulate_mode_) {
+        camera_offset_ = 0.0;
+    }
+
     ROS_INFO("Dog Position Processor initialized");
     ROS_INFO("Waiting for takeoff signal and yaw diff from traj_server...");
     ROS_INFO("Initial yaw offset: 0.0 rad (0.0 deg)");
@@ -250,7 +259,16 @@ void DogPosProcessor::rawDogPosCallback(const nav_msgs::Odometry::ConstPtr& msg)
         raw_dog_vel_ = current_raw_dog_vel;
         raw_dog_yaw_ = current_raw_dog_yaw;
         dog_vel_initialized_ = true;
+        
+        // 初始化last值（使用final值，经过target_yaw转换）
+        double target_yaw = normalizeAngle(raw_dog_yaw_ - yaw_offset_);
+        double cos_yaw = std::cos(target_yaw);
+        double sin_yaw = std::sin(target_yaw);
+        last_dog_vel_.x() = cos_yaw * raw_dog_vel_.x() - sin_yaw * raw_dog_vel_.y();
+        last_dog_vel_.y() = sin_yaw * raw_dog_vel_.x() + cos_yaw * raw_dog_vel_.y();
+        last_dog_vel_.z() = raw_dog_vel_.z();
     } else {
+        // 先更新raw_dog_vel_和raw_dog_yaw_（用于后续计算final值）
         // 狗头
         raw_dog_vel_.x() = 0.7 * raw_dog_vel_.x() + 0.3 * current_raw_dog_vel.x();
         // 狗侧
@@ -260,8 +278,25 @@ void DogPosProcessor::rawDogPosCallback(const nav_msgs::Odometry::ConstPtr& msg)
         
         // yaw滤波（完全按照callback.cpp）
         double delta_yaw = normalizeAngle(current_raw_dog_yaw - raw_dog_yaw_);
-        raw_dog_yaw_ += 0.2 * delta_yaw;
+        raw_dog_yaw_ += 0.5 * delta_yaw;
         updateDogYawRate(delta_yaw);
+        
+        // 计算当前的final_dog_vel_（使用target_yaw转换）
+        double target_yaw = normalizeAngle(raw_dog_yaw_ - yaw_offset_);
+        double cos_yaw = std::cos(target_yaw);
+        double sin_yaw = std::sin(target_yaw);
+        Eigen::Vector3d current_final_dog_vel;
+        current_final_dog_vel.x() = cos_yaw * raw_dog_vel_.x() - sin_yaw * raw_dog_vel_.y();
+        current_final_dog_vel.y() = sin_yaw * raw_dog_vel_.x() + cos_yaw * raw_dog_vel_.y();
+        current_final_dog_vel.z() = raw_dog_vel_.z();
+        
+        // 计算速度变化量并更新加速度（使用最终的vel差值）
+        if (precise_yaw_offset_ready_) {
+            Eigen::Vector3d delta_vel = current_final_dog_vel - last_dog_vel_;
+            updateDogAcc(delta_vel);
+        }
+        // 更新last值（只更新vel，yaw rate不需要）
+        last_dog_vel_ = current_final_dog_vel;
     }
     
     // 收到raw dog pos后立即发布处理后的dog_pos
@@ -277,7 +312,7 @@ void DogPosProcessor::updateDogYawRate(double delta_yaw) {
     if (!dog_yaw_rate_initialized_) {
         // 首次初始化
         last_dog_yaw_time_ = current_time;
-        dog_yaw_rate_ = 0.0;
+        final_dog_yaw_rate_ = 0.0;
         dog_yaw_rate_initialized_ = true;
     } else {
         // 计算时间差
@@ -288,11 +323,43 @@ void DogPosProcessor::updateDogYawRate(double delta_yaw) {
             double instant_yaw_rate = delta_yaw / dt;
             
             // 简单滤波
-            dog_yaw_rate_ = (1.0 - yaw_rate_filter_gain_) * dog_yaw_rate_ + 
+            final_dog_yaw_rate_ = (1.0 - yaw_rate_filter_gain_) * final_dog_yaw_rate_ + 
                            yaw_rate_filter_gain_ * instant_yaw_rate;
             
             // 更新上一帧时间
             last_dog_yaw_time_ = current_time;
+        }
+    }
+}
+
+// 更新狗通信加速度
+// 参数:
+//     delta_vel: 速度变化量 [vx, vy, vz]
+void DogPosProcessor::updateDogAcc(const Eigen::Vector3d& delta_vel) {
+    double current_time = ros::Time::now().toSec();
+    
+    if (!dog_acc_initialized_) {
+        // 首次初始化
+        last_dog_vel_time_ = current_time;
+        final_dog_acc_ = Eigen::Vector3d::Zero();
+        dog_acc_initialized_ = true;
+    } else {
+        // 计算时间差
+        double dt = current_time - last_dog_vel_time_;
+        if (dt > 0.001) {  // 避免除零，至少1ms间隔
+            // 计算瞬时加速度
+            Eigen::Vector3d instant_acc = delta_vel / dt;
+            
+            // 简单滤波（每个分量分别滤波）
+            final_dog_acc_.x() = (1.0 - acc_filter_gain_) * final_dog_acc_.x() + 
+                          acc_filter_gain_ * instant_acc.x();
+            final_dog_acc_.y() = (1.0 - acc_filter_gain_) * final_dog_acc_.y() + 
+                          acc_filter_gain_ * instant_acc.y();
+            final_dog_acc_.z() = (1.0 - acc_filter_gain_) * final_dog_acc_.z() + 
+                          acc_filter_gain_ * instant_acc.z();
+            
+            // 更新上一帧时间
+            last_dog_vel_time_ = current_time;
         }
     }
 }
@@ -309,35 +376,6 @@ void DogPosProcessor::targetCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     
     target_count_++;
 
-    // 仿真模式：直接在目标回调中发布 dog_pos_processed
-    if (simulate_mode_) {
-        nav_msgs::Odometry out;
-        out.header.stamp = ros::Time::now();
-        out.header.frame_id = "world";
-
-        // 位置
-        out.pose.pose.position.x = msg->pose.pose.position.x;
-        out.pose.pose.position.y = msg->pose.pose.position.y;
-        out.pose.pose.position.z = msg->pose.pose.position.z;
-
-        // ready flags
-        out.pose.pose.orientation.w = 1.0;  // initialized_
-        out.pose.pose.orientation.x = 0.0;
-        out.pose.pose.orientation.y = 1.0;  // precise_pos_offset_ready_
-        out.pose.pose.orientation.z = 1.0;  // precise_yaw_offset_ready_
-
-        // 速度
-        out.twist.twist.linear.x = msg->twist.twist.linear.x;
-        out.twist.twist.linear.y = msg->twist.twist.linear.y;
-        out.twist.twist.linear.z = msg->twist.twist.linear.z;
-
-        // yaw 和 yaw_rate
-        out.twist.twist.angular.x = target_dog_yaw_;
-        out.twist.twist.angular.y = 0.0;
-        out.twist.twist.angular.z = 0.0;
-
-        dog_pos_pub_.publish(out);
-    }
 }
 
 // 处理VINS数据
@@ -372,10 +410,6 @@ void DogPosProcessor::takeoffCallback(const quadrotor_msgs::TakeoffLand::ConstPt
         precise_yaw_offset_ready_ = false;
         precise_pos_offset_ready_ = false;
         trigger_received_ = false;
-        // 重置速度相关变量
-        dog_yaw_rate_initialized_ = false;
-        dog_vel_initialized_ = false;
-        dog_yaw_rate_ = 0.0;
     }
 }
 
@@ -415,6 +449,10 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
         last_dog_pos_timer_++;
         if (last_dog_pos_timer_ >= 1) {  // 连续5次没有新包才重置
             raw_dog_pos_received_ = false;
+            // 重置速度相关变量
+            dog_yaw_rate_initialized_ = false;
+            dog_vel_initialized_ = false;
+            dog_acc_initialized_ = false;
         }
     }
     
@@ -601,7 +639,7 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
     
     // 维护AOA位置偏移（单距离单角度方案）
     // 前提：yaw ready、vins可用、aoa可用，且飞机朝向与当前处理后狗位姿夹角在±30度内
-    if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_ && aoa_distance_ > aoa_min_distance_) {
+    if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_) {
         // 角度限制：飞机朝向需面向当前processed dog pos的±30度
         Eigen::Vector3d dog_vec = final_dog_pos_ - vins_pos_;
         double heading_to_dog = std::atan2(dog_vec.y(), dog_vec.x());
@@ -615,6 +653,10 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
             return;
         }
         double aoa_distance_horizontal = std::sqrt(aoa_distance_ * aoa_distance_ - height_diff * height_diff);
+
+        if (aoa_distance_horizontal < aoa_min_distance_) {
+            return;
+        }
 
         // ========================== 坐标与几何问题定义 ==========================
         //
@@ -933,20 +975,24 @@ void DogPosProcessor::publishProcessedDogPos() {
     msg.pose.pose.position.y = final_dog_pos_.y();
     msg.pose.pose.position.z = final_dog_pos_.z();
 
-    // 状态位：w=initialized, x=aoa_converged, y=precise_pos_ready, z=precise_yaw_ready
-    msg.pose.pose.orientation.w = initialized_ ? 1.0 : 0.0;
-    msg.pose.pose.orientation.x = 0.0;
-    msg.pose.pose.orientation.y = precise_pos_offset_ready_ ? 1.0 : 0.0;
-    msg.pose.pose.orientation.z = precise_yaw_offset_ready_ ? 1.0 : 0.0;
+    // 状态位和加速度：
+    // w = precise_pos_offset_ready_
+    // x = precise_yaw_offset_ready_
+    // y = 加速度x（世界坐标系）
+    // z = 加速度y（世界坐标系）
+    msg.pose.pose.orientation.w = precise_pos_offset_ready_ ? 1.0 : 0.0;
+    msg.pose.pose.orientation.x = precise_yaw_offset_ready_ ? 1.0 : 0.0;
+    msg.pose.pose.orientation.y = final_dog_acc_.x();  // 发布x方向加速度（世界坐标系）
+    msg.pose.pose.orientation.z = final_dog_acc_.y();  // 发布y方向加速度（世界坐标系）
 
     // 速度
     msg.twist.twist.linear.x = final_dog_vel_.x();
     msg.twist.twist.linear.y = final_dog_vel_.y();
     msg.twist.twist.linear.z = final_dog_vel_.z();
     
-    // 最终yaw放在twist.angular.x,另外，y和z放上转换后的狗的速度
+    // 最终yaw放在twist.angular.x,另外，y放上狗通信角速度
     msg.twist.twist.angular.x = final_dog_yaw_;
-    msg.twist.twist.angular.y = dog_yaw_rate_;  // 发布狗通信角速度
+    msg.twist.twist.angular.y = final_dog_yaw_rate_;  // 发布狗通信角速度
     msg.twist.twist.angular.z = 0.0;
 
     dog_pos_pub_.publish(msg);
