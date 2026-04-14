@@ -32,17 +32,15 @@ extern double z_p;
 extern double z_i;
 extern double z_d;
 
-extern double intergral_targetx;  // 世界系积分项（x方向）
-extern double intergral_targety;  // 世界系积分项（y方向）
-extern double intergral_targetx_body;
-extern double intergral_targety_body;
+extern double intergral_targetx;
+extern double intergral_targety;
 extern double intergral_targetz;
 
 extern int triger_mode;
 extern int land_lock_timer;
 extern double mode_vins_z;
 extern double mode_vins_vel_z;
-extern bool reflight_complete;
+extern bool ready_to_descend;
 extern bool traj_initialized;
 extern bool last_cmd_initialized;
 extern ros::Time heartbeat_time_;
@@ -54,6 +52,7 @@ extern ros::Time last_hc14_dog_acc_time;
 extern bool hc14_dog_acc_initialized;
 extern double jerk_filter_alpha_x;
 extern double jerk_filter_alpha_y;
+extern double hc14_perception_confidence;
 
 void initCallback(const ros::TimerEvent &event) {
     if (!odom_received_)
@@ -195,24 +194,13 @@ void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     int new_triger_mode = msgPtr->pose.orientation.w;
     std::cout << "new_triger_mode: " << new_triger_mode << std::endl;
-    
     if (new_triger_mode == -1){
         intergral_targetx = 0;
         intergral_targety = 0;
-        intergral_targetx_body = 0;
-        intergral_targety_body = 0;
         intergral_targetz = 0;
     }else if (new_triger_mode == 0){
         if (triger_mode == -1){
             last_cmd_initialized = false;
-        }
-        // 从body系切换到世界系（1 -> 0 或 2 -> 0）时的积分项坐标转换
-        if (triger_mode == 1) {
-            double cos_yaw = cos(vins_yaw);
-            double sin_yaw = sin(vins_yaw);
-            // 将body系积分项转换到世界系（使用平台坐标系）
-            intergral_targetx = intergral_targetx_body * cos_yaw + intergral_targety_body * sin_yaw;
-            intergral_targety = -intergral_targetx_body * sin_yaw + intergral_targety_body * cos_yaw;
         }
         traj_initialized = false;
 
@@ -220,17 +208,9 @@ void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
         if (triger_mode == -1){
             last_cmd_initialized = false;
         }
-        // 从世界系切换到body系（0 -> 1）时的积分项坐标转换
-        if (triger_mode == 0) {
-            double cos_yaw = cos(vins_yaw);
-            double sin_yaw = sin(vins_yaw);
-            // 将世界系积分项转换到body系（使用平台坐标系）
-            intergral_targetx_body = intergral_targetx * cos_yaw - intergral_targety * sin_yaw;
-            intergral_targety_body = intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
-        }
         mode_vins_z = vins_p.z();
         mode_vins_vel_z = vins_v.z();
-        reflight_complete = false;
+        ready_to_descend = false;
     }else if (new_triger_mode == 2){
         if (triger_mode == -1){
             last_cmd_initialized = false;
@@ -278,7 +258,7 @@ void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     ros::Time current_time = ros::Time::now();
     if (hc14_dog_acc_initialized) {
         double dt = (current_time - last_hc14_dog_acc_time).toSec();
-        if (dt > 0.001 && dt < 1.0) {  // 避免除零和异常大的时间间隔
+        if (dt > 0.01 && dt < 1.0) {  // 避免除零和异常大的时间间隔
             // 计算瞬时jerk
             Eigen::Vector2d instant_jerk;
             instant_jerk.x() = (hc14_dog_acc.x() - prev_acc.x()) / dt;
@@ -299,6 +279,9 @@ void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     // 更新上一次的加速度和时间
     last_hc14_dog_acc = hc14_dog_acc;
     last_hc14_dog_acc_time = current_time;
+    
+    // 从twist.angular.z读取感知置信度
+    hc14_perception_confidence = msg->twist.twist.angular.z;
 
     hc14_dog_pos_count++;  // 收到包时计数器+1 
 }

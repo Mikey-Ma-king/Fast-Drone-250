@@ -6,3 +6,8 @@ ceres-solver-2.0.0rc1
 src/CMakeLists.txt
 *.bag
 *.jpg
+*.png
+*.npy
+*.json
+*.svg
+*.zip

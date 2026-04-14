@@ -57,6 +57,8 @@ private:
     
     // 内部函数
     void updateDogYawRate(double delta_yaw);
+    void updateDogPitchRate(double delta_pitch, double dt = -1.0);  // 更新pitch角速度，dt<=0时自动计算
+    void updateDogRollRate(double delta_roll);    // 更新roll角速度
     void updateDogAcc(const Eigen::Vector3d& delta_vel, double dt = -1.0);  // 更新加速度，dt<=0时自动计算
     void publishProcessedDogPos();
     
@@ -96,6 +98,18 @@ private:
     double camera_offset_;
     double aoa_min_distance_;
     
+    // 感知置信度参数
+    double perception_confidence_time_threshold_;  // 时间阈值（秒），超过此时间置信度衰减
+    double perception_confidence_yaw_rate_threshold_;   // yaw角速度阈值（弧度/秒）
+    double perception_confidence_pitch_rate_threshold_; // pitch角速度阈值（弧度/秒）
+    double perception_confidence_roll_rate_threshold_; // roll角速度阈值（弧度/秒）
+    double perception_confidence_yaw_angle_threshold_;   // yaw角度阈值（弧度）
+    double perception_confidence_pitch_angle_threshold_; // pitch角度阈值（弧度）
+    double perception_confidence_roll_angle_threshold_; // roll角度阈值（弧度）
+    double perception_confidence_acc_threshold_;   // 加速度阈值（m/s^2）
+    double perception_confidence_std_threshold_;   // 标准差阈值
+    double perception_confidence_filter_gain_;     // 感知置信度滤波增益
+    double filtered_perception_confidence_;        // 滤波后的感知置信度
     double flow_height_bias_;
     
     // 状态变量
@@ -169,11 +183,15 @@ private:
     // 速度相关
     bool dog_vel_initialized_;
     double final_dog_yaw_rate_;
+    double final_dog_pitch_rate_;   // pitch角速度（弧度/秒）
+    double final_dog_roll_rate_;     // roll角速度（弧度/秒）
     double last_dog_yaw_time_;       // yaw角速度上一次的时间
     double last_dog_pitch_time_;    // pitch角速度上一次的时间
     double last_dog_roll_time_;     // roll角速度上一次的时间
     double yaw_rate_filter_gain_;
     bool dog_yaw_rate_initialized_;
+    bool dog_pitch_rate_initialized_; // pitch角速度初始化标志
+    bool dog_roll_rate_initialized_;  // roll角速度初始化标志
     Eigen::Vector3d last_dog_vel_;  // 上一次滤波后的速度，用于计算加速度
     // 用于在publishProcessedDogPos中计算角速度和加速度的上一次值
     double last_final_dog_yaw_;      // 上一次的final_dog_yaw_，用于计算yaw角速度

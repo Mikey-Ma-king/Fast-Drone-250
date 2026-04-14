@@ -53,8 +53,10 @@ std::mutex global_mutex;
 int flag1 = 0;
 Eigen::Vector3d averge_vel{0.0, 0.0, 0.0};//weihzi
 cv::Mat frame;  
-double last_deg = 0;
-double fin_deg = 0;
+double last_yaw = 0;  // yaw角度（弧度）
+double fin_yaw = 0;    // yaw角度（弧度）
+double fin_pitch = 0;  // pitch角度（弧度）
+double fin_roll = 0;   // roll角度（弧度）
 int triger2 = 0;
 int vins_triger = 0;
 int gos_triger = 0;
@@ -669,9 +671,7 @@ bool isRotationMatrix(const Eigen::Matrix3d& R) {
     return n < 1e-6;
 }
 
-double radians_to_degrees(double radians) {
-    return radians * 180.0 / M_PI;
-}
+// radians_to_degrees函数已移除，全部使用弧度
 
 double rotationMatrixToEulerAngles(const Eigen::Matrix3d& R) {
     assert(isRotationMatrix(R));
@@ -690,14 +690,32 @@ double rotationMatrixToEulerAngles(const Eigen::Matrix3d& R) {
         y = std::atan2(-R(2, 0), sy);
         z = 0;
     }
-    double z_degrees = radians_to_degrees(z);
 
-    // 如果 z 角度大于 180，则减去 360，确保角度在 [-180, 180] 范围内
-    if (z_degrees > 180.0) {
-        z_degrees -= 360.0;
+    // 如果 z 角度大于 π，则减去 2π，确保角度在 [-π, π] 范围内
+    if (z > M_PI) {
+        z -= 2 * M_PI;
     }
 
-    return z_degrees;  // 返回绕 Z 轴的角度（度数）
+    return z;  // 返回绕 Z 轴的角度（弧度）
+}
+
+// 从旋转矩阵提取所有欧拉角（roll, pitch, yaw），返回弧度
+void rotationMatrixToEulerAnglesFull(const Eigen::Matrix3d& R, double& roll, double& pitch, double& yaw) {
+    assert(isRotationMatrix(R));
+
+    double sy = std::sqrt(R(0, 0) * R(0, 0) + R(1, 0) * R(1, 0));
+
+    bool singular = sy < 1e-6;
+
+    if (!singular) {
+        roll = std::atan2(R(2, 1), R(2, 2));   // x轴旋转（roll）
+        pitch = std::atan2(-R(2, 0), sy);      // y轴旋转（pitch）
+        yaw = std::atan2(R(1, 0), R(0, 0));   // z轴旋转（yaw）
+    } else {
+        roll = std::atan2(-R(1, 2), R(1, 1));
+        pitch = std::atan2(-R(2, 0), sy);
+        yaw = 0;
+    }
 }
 
 void read::reda(ros::NodeHandle& nh) {
@@ -721,7 +739,7 @@ void read::reda(ros::NodeHandle& nh) {
     // MultiKalmanFilter kf_3d(0.01, 0.05, 0.02);
 
     sleep(6);
-    double glo_deg;
+    double glo_yaw;  // yaw角度（弧度）
     // Eigen::Matrix3d M;
     // M << 0, 0, 1,
     //     -1, 0, 0,
@@ -906,7 +924,9 @@ void read::reda(ros::NodeHandle& nh) {
 
             Eigen::Vector3d position{0, 0, 0};
             Eigen::Vector3d averagePosition{0, 0, 0};
-            double averageDeg = 0;
+            double averageYaw = 0;    // yaw角度加权平均（弧度）
+            double averagePitch = 0;  // pitch角度加权平均（弧度）
+            double averageRoll = 0;   // roll角度加权平均（弧度）
             double weight_count = 0;
 
             for (int i = 0; i < markerIds.size(); ++i)
@@ -958,54 +978,67 @@ void read::reda(ros::NodeHandle& nh) {
                 Eigen::Matrix3d pose = R1 * R2;
                 // Eigen::Matrix3d pose = R2;
                 // Eigen::Quaterniond q(correctYaw(pose));
-                double deg = rotationMatrixToEulerAngles(pose);
-                glo_deg = deg;
+                
+                // 提取完整的欧拉角（roll, pitch, yaw），单位：弧度
+                double roll, pitch, yaw;
+                rotationMatrixToEulerAnglesFull(pose, roll, pitch, yaw);
+                
+                // 直接使用弧度，不进行转换
+                glo_yaw = yaw;
 
+                // 统一加权平均roll、pitch、yaw角度（弧度）
+                double weight = 0.0;
                 if (currentMarkerId == 29)
-                    averageDeg += (deg * 0.8);
+                    weight = 0.8;
                 else if (currentMarkerId == 33)
-                    averageDeg += (deg * 0.5);
+                    weight = 0.5;
                 else if (currentMarkerId == 0 || currentMarkerId == 1 || currentMarkerId == 2 || currentMarkerId == 3 || currentMarkerId == 4 || currentMarkerId == 5)
-                    averageDeg += (deg * 0.65);
+                    weight = 0.65;
+                
+                if (weight > 0) {
+                    averageYaw += (yaw * weight);       // yaw角度（弧度）
+                    averagePitch += (pitch * weight);   // pitch角度（弧度）
+                    averageRoll += (roll * weight);      // roll角度（弧度）
+                }
 
                 if (currentMarkerId == 29){
-                    position.x() = position.x() + 0.0*std::sin(fin_deg);
-                    position.y() = position.y() - 0.0*std::cos(fin_deg);
+                    position.x() = position.x() + 0.0*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.0*std::cos(fin_yaw);
                     averagePosition += (position * 0.8);
                 }
                 else if (currentMarkerId == 33){
-                    position.x() = position.x() + 0.0*std::sin(fin_deg);
-                    position.y() = position.y() - 0.0*std::cos(fin_deg);
+                    position.x() = position.x() + 0.0*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.0*std::cos(fin_yaw);
                     averagePosition += (position * 0.5);
                 }
                 else if (currentMarkerId == 0){
-                    position.x() = position.x() - 0.193*std::cos(fin_deg) + 0.136*std::sin(fin_deg);
-                    position.y() = position.y() - 0.193*std::sin(fin_deg) - 0.136*std::cos(fin_deg);
+                    position.x() = position.x() - 0.193*std::cos(fin_yaw) + 0.136*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.193*std::sin(fin_yaw) - 0.136*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 1){
-                    position.x() = position.x() + 0.193*std::cos(fin_deg) + 0.136*std::sin(fin_deg);
-                    position.y() = position.y() + 0.193*std::sin(fin_deg) - 0.136*std::cos(fin_deg);
+                    position.x() = position.x() + 0.193*std::cos(fin_yaw) + 0.136*std::sin(fin_yaw);
+                    position.y() = position.y() + 0.193*std::sin(fin_yaw) - 0.136*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 2){
-                    position.x() = position.x() + 0.193*std::cos(fin_deg) - 0.136*std::sin(fin_deg);
-                    position.y() = position.y() + 0.193*std::sin(fin_deg) + 0.136*std::cos(fin_deg);
+                    position.x() = position.x() + 0.193*std::cos(fin_yaw) - 0.136*std::sin(fin_yaw);
+                    position.y() = position.y() + 0.193*std::sin(fin_yaw) + 0.136*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 3){
-                    position.x() = position.x() - 0.193*std::cos(fin_deg) - 0.136*std::sin(fin_deg);
-                    position.y() = position.y() - 0.193*std::sin(fin_deg) + 0.136*std::cos(fin_deg);
+                    position.x() = position.x() - 0.193*std::cos(fin_yaw) - 0.136*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.193*std::sin(fin_yaw) + 0.136*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 4){
-                    position.x() = position.x() + 0.136*std::sin(fin_deg);
-                    position.y() = position.y() - 0.136*std::cos(fin_deg);
+                    position.x() = position.x() + 0.136*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.136*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 5){
-                    position.x() = position.x() + 0.136*std::sin(fin_deg);
-                    position.y() = position.y() - 0.136*std::cos(fin_deg);
+                    position.x() = position.x() + 0.136*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.136*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
 
@@ -1018,26 +1051,70 @@ void read::reda(ros::NodeHandle& nh) {
 
             }
 
-            double this_deg = averageDeg / weight_count;
-            if (std::fabs(this_deg-fin_deg) > 3 &&
-            std::fabs(this_deg-fin_deg + 360) > 3 &&
-            std::fabs(this_deg-fin_deg - 360) > 3)
+            // yaw角度处理（全部使用弧度）
+            double this_yaw = averageYaw / weight_count;
+            const double angle_threshold_rad = 3.0 * M_PI / 180.0;  // 3度转换为弧度（约0.05236）
+            if (std::fabs(this_yaw - fin_yaw) > angle_threshold_rad &&
+            std::fabs(this_yaw - fin_yaw + 2 * M_PI) > angle_threshold_rad &&
+            std::fabs(this_yaw - fin_yaw - 2 * M_PI) > angle_threshold_rad)
             {
                 // 这里不再使用mf1滤波，改为类似callback中yaw offset的滤波方式
-                double delta_yaw = this_deg * M_PI / 180 - fin_deg;
+                double delta_yaw = this_yaw - fin_yaw;
                 // 处理角度环绕问题
                 if (delta_yaw > M_PI) {
                     delta_yaw -= 2 * M_PI;
                 } else if (delta_yaw < -M_PI) {
                     delta_yaw += 2 * M_PI;
                 }
-                fin_deg += 0.5 * delta_yaw; // 0.3为滤波系数，可根据实际调整
+                fin_yaw += 0.5 * delta_yaw; // 0.5为滤波系数，可根据实际调整
             }
 
-            if(fin_deg > M_PI)
-                fin_deg -= 2 * M_PI;
-            else if(fin_deg < -M_PI)
-                fin_deg += 2 * M_PI;
+            if(fin_yaw > M_PI)
+                fin_yaw -= 2 * M_PI;
+            else if(fin_yaw < -M_PI)
+                fin_yaw += 2 * M_PI;
+
+            // pitch角度处理（与yaw完全一致，全部使用弧度）
+            double this_pitch = averagePitch / weight_count;
+            if (std::fabs(this_pitch - fin_pitch) > angle_threshold_rad &&
+            std::fabs(this_pitch - fin_pitch + 2 * M_PI) > angle_threshold_rad &&
+            std::fabs(this_pitch - fin_pitch - 2 * M_PI) > angle_threshold_rad)
+            {
+                double delta_pitch = this_pitch - fin_pitch;
+                // 处理角度环绕问题
+                if (delta_pitch > M_PI) {
+                    delta_pitch -= 2 * M_PI;
+                } else if (delta_pitch < -M_PI) {
+                    delta_pitch += 2 * M_PI;
+                }
+                fin_pitch += 0.5 * delta_pitch; // 0.5为滤波系数，可根据实际调整
+            }
+
+            if(fin_pitch > M_PI)
+                fin_pitch -= 2 * M_PI;
+            else if(fin_pitch < -M_PI)
+                fin_pitch += 2 * M_PI;
+
+            // roll角度处理（与yaw完全一致，全部使用弧度）
+            double this_roll = averageRoll / weight_count;
+            if (std::fabs(this_roll - fin_roll) > angle_threshold_rad &&
+            std::fabs(this_roll - fin_roll + 2 * M_PI) > angle_threshold_rad &&
+            std::fabs(this_roll - fin_roll - 2 * M_PI) > angle_threshold_rad)
+            {
+                double delta_roll = this_roll - fin_roll;
+                // 处理角度环绕问题
+                if (delta_roll > M_PI) {
+                    delta_roll -= 2 * M_PI;
+                } else if (delta_roll < -M_PI) {
+                    delta_roll += 2 * M_PI;
+                }
+                fin_roll += 0.5 * delta_roll; // 0.5为滤波系数，可根据实际调整
+            }
+
+            if(fin_roll > M_PI)
+                fin_roll -= 2 * M_PI;
+            else if(fin_roll < -M_PI)
+                fin_roll += 2 * M_PI;
 
             position = averagePosition / weight_count;
             if((ros::Time::now() - target_start_time).toSec() > 1.0)
@@ -1066,7 +1143,7 @@ void read::reda(ros::NodeHandle& nh) {
                     gos_vins_p0 = avg;
                 // if(flow_z > 0.3)
                 //     gos_vins_p0.z() = T1[2] - (flow_z - 0.41);
-                gos_vins_yaw0 = fin_deg;
+                gos_vins_yaw0 = fin_yaw;
                 gos_yaw0 = gos_yaw;
                 d_yaw = gos_vins_yaw0 - gos_yaw0 ;
                 Eigen::Vector3d reflect;
@@ -1101,8 +1178,8 @@ void read::reda(ros::NodeHandle& nh) {
                     // 基于VINS的机体朝向，将最终位置向机体左侧偏移2cm
                     // 从VINS旋转矩阵R1获取yaw（机体朝向，世界系）
                     double yaw_vins = std::atan2(R1(1,0), R1(0,0));
-                    filtered_x -= 0.00 * std::sin(yaw_vins);
-                    filtered_y += 0.00 * std::cos(yaw_vins);
+                    // filtered_x -= 0.00 * std::sin(yaw_vins);
+                    // filtered_y += 0.00 * std::cos(yaw_vins);
 
                     odom_msg.pose.pose.position.x = round_to_decimal_places(filtered_x, 2);
                     odom_msg.pose.pose.position.y = round_to_decimal_places(filtered_y, 2);
@@ -1110,9 +1187,9 @@ void read::reda(ros::NodeHandle& nh) {
                     odom_msg.twist.twist.linear.x = 1.0*averge_v[0];
                     odom_msg.twist.twist.linear.y = 1.0*averge_v[1];
                     odom_msg.twist.twist.linear.z = 0;
-                    odom_msg.pose.pose.orientation.w = fin_deg;
-                    odom_msg.pose.pose.orientation.x = 0;
-                    odom_msg.pose.pose.orientation.y = 0;
+                    odom_msg.pose.pose.orientation.w = fin_yaw;      // yaw角度（弧度）
+                    odom_msg.pose.pose.orientation.x = fin_pitch;    // pitch角度（弧度）
+                    odom_msg.pose.pose.orientation.y = fin_roll;    // roll角度（弧度）
                     odom_msg.pose.pose.orientation.z = 0;                    
 
                     static bool initialize = false;
@@ -1161,11 +1238,11 @@ void read::reda(ros::NodeHandle& nh) {
 
         // 显示 vins 的位姿 T1
         
-        cv::putText(frame, std::string("deg: ") + std::to_string(glo_deg),
+        cv::putText(frame, std::string("yaw (rad): ") + std::to_string(glo_yaw),
                     cv::Point(10, 190), cv::FONT_HERSHEY_SIMPLEX, 1.0,
                     cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 
-        cv::putText(frame, std::string("last_deg: ") + std::to_string(last_deg),
+        cv::putText(frame, std::string("last_yaw (rad): ") + std::to_string(last_yaw),
                     cv::Point(10, 230), cv::FONT_HERSHEY_SIMPLEX, 1.0,
                     cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 

@@ -88,10 +88,7 @@ Eigen::Vector3d hc14_dog_pos{0,0,0};
 double hc14_dog_yaw = 0.0;
 double hc14_dog_yaw_rate = 0.0;  // 狗通信角速度
 Eigen::Vector2d hc14_dog_acc{0,0};  // 狗加速度（世界坐标系，x和y）
-Eigen::Vector2d hc14_dog_jerk_filtered{0,0};  // 滤波后的狗jerk
-Eigen::Vector2d last_hc14_dog_acc{0,0};  // 上一次的狗加速度，用于计算jerk
-ros::Time last_hc14_dog_acc_time;  // 上一次加速度的时间戳
-bool hc14_dog_acc_initialized = false;  // 加速度是否已初始化
+double hc14_perception_confidence = 0.0;  // 感知置信度（0-1之间）
 bool hc14_offset_yaw_ready = false;  // hc14_dog信息是否可用
 bool hc14_offset_pos_ready = false;  // hc14_dog位置信息是否可用
 
@@ -152,7 +149,11 @@ const double max_jerk = 100.0;   // 最大jerk限制 (m/s^3)
 const double accel_dt = 0.01;  // 时间间隔 (s)
 const double max_accel_z = 1.0;  // z方向最大加速度限制 (m/s^2)
 
-const double land_vel = -0.6;  // 高度较高时的最大下降速度 (m/s)
+// 降落速度参数（先快后慢）
+const double land_vel_max_high = -0.6;  // 高度较高时的最大下降速度 (m/s)
+const double land_vel_max_low = -0.6;   // 高度较低时的最大下降速度 (m/s)
+const double land_height_fast = 1.5;    // 高于此高度时使用快速下降 (m)
+const double land_height_slow = 0.8;    // 低于此高度时使用慢速下降 (m)
 
 double x_p = 0.3;
 double x_i = 0.83;
@@ -162,26 +163,14 @@ double v_offset_x = 0.0;
 double integral_limit_x = 0.7;
 double integral_decay = 0.0;  // 积分衰减系数（1/s），防止积分 windup
 double acc_gain_x = 0.0; // 0.6
-double jerk_filter_alpha_x = 0.02;  // jerk线性滤波系数（x方向），0-1之间，越小滤波越强
-double jerk_gain_x = 0.0;  // jerk前馈增益（x方向）
-double acc_feedforward_sat_threshold_x = 0.1;  // 加速度前馈饱和阈值（x方向），小于此值时线性，大于此值时饱和
-double acc_feedforward_sat_value_x = 1.0;  // 加速度前馈饱和值（x方向），大于threshold时的饱和值
-double jerk_feedforward_sat_threshold_x = 0.3;  // jerk前馈饱和阈值（x方向）
-double jerk_feedforward_sat_value_x = 1.0;  // jerk前馈饱和值（x方向）
 
 double y_p = 0.3;
 double y_i = 0.83;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
-double integral_limit_y = 0.4;
+double integral_limit_y = 0.7;
 double acc_gain_y = 0.0; // 0.6
-double jerk_filter_alpha_y = 0.02;  // jerk线性滤波系数（y方向），0-1之间，越小滤波越强
-double jerk_gain_y = 0.0;  // jerk前馈增益（y方向）
-double acc_feedforward_sat_threshold_y = 0.1;  // 加速度前馈饱和阈值（y方向），小于此值时线性，大于此值时饱和
-double acc_feedforward_sat_value_y = 1.0;  // 加速度前馈饱和值（y方向），大于threshold时的饱和值
-double jerk_feedforward_sat_threshold_y = 0.3;  // jerk前馈饱和阈值（y方向）
-double jerk_feedforward_sat_value_y = 1.0;  // jerk前馈饱和值（y方向）
 
 double z_p = 0.25;
 double z_i = 0.0;
@@ -819,10 +808,35 @@ void cmdCallback(const ros::TimerEvent &e) {
     }
     else if (triger_mode == 2)
     {
-      mode_vins_z += land_vel * accel_dt;
-      target_vz = target_v.z() + land_vel;
+      // 降落模式：根据高度差分段设置下降速度（先快后慢）
+      double height_diff = vins_p.z() - target_p.z();
+
+      // 计算目标速度
+      double target_vel_z;
+      if (height_diff >= land_height_fast) {
+        target_vel_z = land_vel_max_high;  // 高度高，快降
+      } else if (height_diff <= land_height_slow) {
+        target_vel_z = land_vel_max_low;   // 高度低，慢降
+      } else {
+        double ratio = (height_diff - land_height_slow) / (land_height_fast - land_height_slow);
+        target_vel_z = land_vel_max_low + ratio * (land_vel_max_high - land_vel_max_low);
+      }
+    
+      // 计算目标加速度（限制在max_accel_z内）
+      double desired_accel_z = (target_vel_z - mode_vins_vel_z) / accel_dt;
+      desired_accel_z = std::max(-max_accel_z, std::min(max_accel_z, desired_accel_z));
+      
+      // 持续更新mode_vins_vel_z（加速度乘以dt，限制速度变化不超过dt*max_accel）
+      double vel_change = desired_accel_z * accel_dt;
+      mode_vins_vel_z += vel_change;
+      
+      // 持续更新mode_vins_z（速度乘以dt）
+      mode_vins_z += mode_vins_vel_z * accel_dt;
+      target_vz = target_v.z() + mode_vins_vel_z;
       targetz = mode_vins_z;
+
     }
+
   }
 
   error_targetx = targetx - vins_p.x();
@@ -835,24 +849,18 @@ void cmdCallback(const ros::TimerEvent &e) {
     last_error_targetz = error_targetz;
   }
 
-  double cos_yaw, sin_yaw;
-  if (triger_mode == 0) {
-    cos_yaw = cos(0.0);
-    sin_yaw = sin(0.0);
-  } else {
-    cos_yaw = cos(target_yaw);
-    sin_yaw = sin(target_yaw);
-  }
+  double cos_yaw = cos(vins_yaw);
+  double sin_yaw = sin(vins_yaw);
 
   // 坐标系变换到平台体系（狗体系）
-  double error_x_body =  error_targetx * cos_yaw + error_targety * sin_yaw;
-  double error_y_body =  - error_targetx * sin_yaw + error_targety * cos_yaw;
-  double last_error_x_body = last_error_targetx * cos_yaw + last_error_targety * sin_yaw;
-  double last_error_y_body = - last_error_targetx * sin_yaw + last_error_targety * cos_yaw;
-  double target_vx_body = target_vx * cos_yaw + target_vy * sin_yaw;
-  double target_vy_body = - target_vx * sin_yaw + target_vy * cos_yaw;
-  double target_x_body = targetx * cos_yaw + targety * sin_yaw;
-  double target_y_body = - targetx * sin_yaw + targety * cos_yaw;
+  double error_x_body =  error_targetx * cos_yaw - error_targety * sin_yaw;
+  double error_y_body =  error_targetx * sin_yaw + error_targety * cos_yaw;
+  double last_error_x_body = last_error_targetx * cos_yaw - last_error_targety * sin_yaw;
+  double last_error_y_body = last_error_targetx * sin_yaw + last_error_targety * cos_yaw;
+  double target_vx_body = target_vx * cos_yaw - target_vy * sin_yaw;
+  double target_vy_body = target_vx * sin_yaw + target_vy * cos_yaw;
+  double target_x_body = targetx * cos_yaw - targety * sin_yaw;
+  double target_y_body = targetx * sin_yaw + targety * cos_yaw;
 
   double current_x_p, current_y_p, current_z_p, current_pos_x_p, current_pos_y_p;
   double current_x_i, current_y_i, current_z_i, current_pos_x_i, current_pos_y_i;
@@ -907,8 +915,8 @@ void cmdCallback(const ros::TimerEvent &e) {
   double integral_x_used, integral_y_used;
   if (triger_mode == 0) {
     // trigger_mode=0时使用世界系积分项，需要转换到body系
-    integral_x_used = intergral_targetx * cos_yaw + intergral_targety * sin_yaw;
-    integral_y_used = - intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
+    integral_x_used = intergral_targetx * cos_yaw - intergral_targety * sin_yaw;
+    integral_y_used = intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
   } else {
     // trigger_mode=1或2时使用body系积分项
     integral_x_used = intergral_targetx_body;
@@ -924,26 +932,18 @@ void cmdCallback(const ros::TimerEvent &e) {
   double y_body = target_y_body + current_pos_y_p * error_y_body + current_pos_y_i * integral_y_used + std::max(std::min(current_pos_y_d * (error_y_body - last_error_y_body), current_pos_y_d_max), -current_pos_y_d_max);
   
   // 再转回世界系
-  cmd.velocity.x = vx_body * cos_yaw - vy_body * sin_yaw;
-  cmd.velocity.y = vx_body * sin_yaw + vy_body * cos_yaw;
+  cmd.velocity.x = vx_body * cos_yaw + vy_body * sin_yaw;
+  cmd.velocity.y = - vx_body * sin_yaw + vy_body * cos_yaw;
   cmd.velocity.z = vz;
   
-  cmd.position.x = x_body * cos_yaw - y_body * sin_yaw;
-  cmd.position.y = x_body * sin_yaw + y_body * cos_yaw;
+  cmd.position.x = x_body * cos_yaw + y_body * sin_yaw;
+  cmd.position.y = - x_body * sin_yaw + y_body * cos_yaw;
   cmd.position.z = targetz;
 
-  // 在精确模式下，设置加速度前馈（包含jerk前馈）
+  // 在精确模式下，设置加速度前馈
   if ((triger_mode == 1 || triger_mode == 2)) {
-    double acc_x = hc14_dog_acc.x() * acc_gain_x;
-    double acc_y = hc14_dog_acc.y() * acc_gain_y;
-    double jerk_x = hc14_dog_jerk_filtered.x() * jerk_gain_x;
-    double jerk_y = hc14_dog_jerk_filtered.y() * jerk_gain_y;
-    double sat_acc_x = std::min(std::fabs(acc_x) / acc_feedforward_sat_threshold_x, 1.0) * acc_feedforward_sat_value_x;
-    double sat_acc_y = std::min(std::fabs(acc_y) / acc_feedforward_sat_threshold_y, 1.0) * acc_feedforward_sat_value_y;
-    double sat_jerk_x = std::min(std::fabs(jerk_x) / jerk_feedforward_sat_threshold_x, 1.0) * jerk_feedforward_sat_value_x;
-    double sat_jerk_y = std::min(std::fabs(jerk_y) / jerk_feedforward_sat_threshold_y, 1.0) * jerk_feedforward_sat_value_y;
-    cmd.acceleration.x = sat_acc_x * acc_x + sat_jerk_x * jerk_x;
-    cmd.acceleration.y = sat_acc_y * acc_y + sat_jerk_y * jerk_y;
+    cmd.acceleration.x = hc14_dog_acc.x() * acc_gain_x;
+    cmd.acceleration.y = hc14_dog_acc.y() * acc_gain_y;
   }
 
   // 角度限制逻辑，防止一次转角太大
@@ -1109,8 +1109,8 @@ void cmdCallback(const ros::TimerEvent &e) {
     intergral_targety = intergral_targety * decay_factor + accel_dt * (cmd.position.y - vins_p.y());
   } else {
     // trigger_mode=1或2时在body系累积x和y的积分项
-    intergral_targetx_body = intergral_targetx_body * decay_factor + accel_dt * ((cmd.position.x - vins_p.x()) * cos_yaw + (cmd.position.y - vins_p.y()) * sin_yaw);
-    intergral_targety_body = intergral_targety_body * decay_factor + accel_dt * (- (cmd.position.x - vins_p.x()) * sin_yaw + (cmd.position.y - vins_p.y()) * cos_yaw);
+    intergral_targetx_body = intergral_targetx_body * decay_factor + accel_dt * ((cmd.position.x - vins_p.x()) * cos_yaw - (cmd.position.y - vins_p.y()) * sin_yaw);
+    intergral_targety_body = intergral_targety_body * decay_factor + accel_dt * ((cmd.position.x - vins_p.x()) * sin_yaw + (cmd.position.y - vins_p.y()) * cos_yaw);
   }
   
   // z轴积分项仍在世界系累积（因为z轴不需要坐标变换）
@@ -1128,21 +1128,17 @@ void cmdCallback(const ros::TimerEvent &e) {
 
 
   // 发布调试信息到plotjuggler
-  quadrotor_msgs::PositionCommand debug_msg;
-  debug_msg.header.stamp = ros::Time::now();
-  debug_msg.header.frame_id = "world";
-  debug_msg.position.x = error_targetx;  // 使用position字段存储error_targetx
-  debug_msg.position.y = error_targety;  // 使用position字段存储error_targety
-  debug_msg.position.z = std::sqrt(error_targetx * error_targetx + error_targety * error_targety); // 输出xy方向的误差模长
-  // 输出body系下向量的角度值（x方向为前，y方向为左）
-  debug_msg.velocity.x = std::atan2(
-      (cmd.position.x - vins_p.x()) * cos_yaw + (cmd.position.y - vins_p.y()) * sin_yaw,
-      - (cmd.position.x - vins_p.x()) * sin_yaw + (cmd.position.y - vins_p.y()) * cos_yaw
-  );
-  debug_msg.velocity.y = hc14_dog_jerk_filtered.x();
-  debug_msg.velocity.z = hc14_dog_jerk_filtered.y();
-  debug_msg.yaw = last_error_targetx;  // 使用yaw字段存储last_error_targetx
-  debug_pub_.publish(debug_msg);
+  // quadrotor_msgs::PositionCommand debug_msg;
+  // debug_msg.header.stamp = ros::Time::now();
+  // debug_msg.header.frame_id = "world";
+  // debug_msg.position.x = error_targetx;  // 使用position字段存储error_targetx
+  // debug_msg.position.y = error_targety;  // 使用position字段存储error_targety
+  // debug_msg.position.z = error_targetz;  // 使用position字段存储error_targetz
+  // debug_msg.velocity.x = intergral_targetx;  // 使用velocity字段存储积分项
+  // debug_msg.velocity.y = intergral_targety;
+  // debug_msg.velocity.z = intergral_targetz;
+  // debug_msg.yaw = last_error_targetx;  // 使用yaw字段存储last_error_targetx
+  // debug_pub_.publish(debug_msg);
 
   pos_cmd_pub_.publish(cmd);
   return;
@@ -1249,7 +1245,8 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
           std::fabs(target_p.x() - vins_p.x()) < 0.4 &&
           std::fabs(target_p.y() - vins_p.y()) < 0.4 &&
-          angle_diff < 30.0/180.0 * M_PI)
+          angle_diff < 15.0/180.0 * M_PI &&
+          hc14_perception_confidence > 0.6)
       {
         land_timer ++;
         if (land_timer > 10)
@@ -1280,8 +1277,9 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
             std::fabs(target_v.y() - vins_v.y()) < 0.65 && 
             std::fabs(target_p.x() - vins_p.x()) < 0.55 &&
             std::fabs(target_p.y() - vins_p.y()) < 0.55 &&
-            vins_p.z() > target_p.z() - 0.2 &&
-            angle_diff < 45.0/180.0 * M_PI ))
+            vins_p.z() > target_p.z() - 0.1 &&
+            angle_diff < 25.0/180.0 * M_PI &&
+            (hc14_perception_confidence > 0.4 || vins_p.z() > target_p.z() + 0.3)))
       {
         geometry_msgs::PoseStamped mode_msg;
         mode_msg.header.stamp = ros::Time::now();

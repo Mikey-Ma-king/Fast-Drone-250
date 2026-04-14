@@ -32,6 +32,7 @@ reset_mpc = 0
 dog_pos_p = np.array([0.0,0.0,0.0])
 dog_pos_v = np.array([0.0,0.0,0.0])
 dog_pos_yaw = 0.0
+dog_pos_acc = np.array([0.0,0.0])  # 狗加速度（世界坐标系，x和y）
 dog_pos_received_ = 0
 last_target_ekf_time = 0.0
 hc14_offset_yaw_ready = False
@@ -131,6 +132,7 @@ class all_Subscriber:
         global dog_pos_p
         global dog_pos_v
         global dog_pos_yaw
+        global dog_pos_acc
         global dog_pos_received_
         global hc14_offset_yaw_ready
         global hc14_offset_pos_ready
@@ -147,8 +149,14 @@ class all_Subscriber:
         
         # 处理后的yaw
         dog_pos_yaw = msg.twist.twist.angular.x
-        hc14_offset_yaw_ready = (msg.pose.pose.orientation.z > 0.5)
-        hc14_offset_pos_ready = (msg.pose.pose.orientation.y > 0.5)
+        
+        # 从orientation.w和x读取precise_pos_offset_ready和precise_yaw_offset_ready状态
+        hc14_offset_pos_ready = (msg.pose.pose.orientation.w > 0.5)
+        hc14_offset_yaw_ready = (msg.pose.pose.orientation.x > 0.5)
+        
+        # 从orientation.y和z读取加速度（世界坐标系）
+        dog_pos_acc[0] = msg.pose.pose.orientation.y
+        dog_pos_acc[1] = msg.pose.pose.orientation.z
 
         dog_pos_received_ = 1
 
@@ -426,13 +434,13 @@ vis = TrajectoryVisualizer()
 
 pos_cmd_pub = rospy.Publisher('/position_cmd', PositionCommand, queue_size=1)
 stop_triger_pub = rospy.Publisher('/stop_triger', PoseStamped, queue_size=1)
-mpc = DroneMPC(N = 15)
+mpc = DroneMPC(N = 50)
 # mpc.v_max = np.array([2.0, 2.0, 0.8])  # 速度限制
 # mpc.a_max = np.array([1.3, 1.3, 0.6])  # 加速度限制
 # mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
 mpc.v_max = np.array([1.5, 1.5, 0.8])  # 速度限制
-mpc.a_max = np.array([1.0, 1.0, 0.6])  # 加速度限制
-mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
+mpc.a_max = np.array([0.8, 0.8, 0.6])  # 加速度限制
+mpc.Q = np.diag([10, 10, 20, 5, 5, 5])  # 位置权重
 # drone_state = np.array([0, 0, 0.4, 0, 0, 0])  # 初始状态 [px,py,pz,vx,vy,vz]
 rate = rospy.Rate(80)
 MPC_clcyle = time.time() - 10

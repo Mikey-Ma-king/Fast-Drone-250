@@ -25,6 +25,7 @@
 - control_frequency: 控制频率（Hz）
 - start_delay: 开始前等待时间（秒）
 - final_position_hold_time: 完成后保持位置时间（秒）
+- infinite_round_trip: 是否启用无限往返模式（True: 无限往返不停下, False: 单次运动）
 - verbose_output: 是否显示详细进度
 - yaw_rotation_angle: 旋转角度（度，仅旋转模式）
 
@@ -43,7 +44,9 @@
 2. 等待接收vins_fusion位置信息
 3. 第一阶段：飞到指定高度并保持一段时间（从当前位置开始）
 4. 第二阶段：执行速度偏移测试（根据motion_mode选择变速或匀速）
-5. 保持最终位置
+   - 无限往返模式：从起点到终点，再从终点回到起点，如此循环（按Ctrl+C停止）
+   - 单次模式：从起点到终点，然后保持最终位置
+5. 保持最终位置（仅单次模式）
 
 设计特点：
 - 统一的状态计算函数，同时返回位置、速度、yaw值
@@ -108,6 +111,9 @@ class VelocityOffsetTest:
         
         # 位置保持时间
         self.final_position_hold_time = 2.0  # 测试完成后保持最终位置的时间（秒）
+        
+        # 无限往返模式
+        self.infinite_round_trip = True  # 是否启用无限往返模式（True: 无限往返, False: 单次运动）
         
         # 是否显示详细进度信息
         self.verbose_output = True
@@ -186,6 +192,28 @@ class VelocityOffsetTest:
 
     def calculate_target_state(self, t):
         """计算目标状态（位置、速度、yaw）"""
+        # 无限往返模式处理
+        if self.infinite_round_trip and self.flight_mode != "yaw_rotation":
+            # 往返一次的总时间
+            round_trip_time = 2 * self.total_time
+            # 当前在哪个往返周期
+            cycle = int(t / round_trip_time)
+            # 在当前周期内的相对时间
+            t_in_cycle = t % round_trip_time
+            # 判断是正向还是反向
+            if t_in_cycle < self.total_time:
+                # 正向运动（从起点到终点）
+                t_relative = t_in_cycle
+                current_direction = self.direction
+            else:
+                # 反向运动（从终点回到起点）
+                t_relative = t_in_cycle - self.total_time
+                current_direction = -self.direction
+        else:
+            # 单次运动模式
+            t_relative = t
+            current_direction = self.direction
+        
         # 先计算速度（只算一遍）
         if self.flight_mode == "yaw_rotation":
             # 旋转模式：位置速度为零
@@ -196,9 +224,9 @@ class VelocityOffsetTest:
                 velocity = self.max_velocity
             else:
                 # 变速模式：先加速后匀速
-                if t <= self.acceleration_time:
+                if t_relative <= self.acceleration_time:
                     # 加速阶段：匀加速
-                    velocity = (self.max_velocity / self.acceleration_time) * t
+                    velocity = (self.max_velocity / self.acceleration_time) * t_relative
                 else:
                     # 匀速阶段
                     velocity = self.max_velocity
@@ -206,44 +234,63 @@ class VelocityOffsetTest:
         # 用计算好的速度算距离
         if self.motion_mode == "constant_speed":
             # 匀速模式：距离 = 速度 × 时间
-            distance = velocity * t
+            distance = velocity * t_relative
         else:
             # 变速模式：先加速后匀速
-            if t <= self.acceleration_time:
+            if t_relative <= self.acceleration_time:
                 # 加速阶段：匀加速运动
                 # 注意：这里不能用 velocity * t，因为velocity是瞬时速度
                 # 需要用积分：距离 = ∫v(t)dt = ∫(a*t)dt = 0.5*a*t²
-                distance = 0.5 * (self.max_velocity / self.acceleration_time) * t * t
+                distance = 0.5 * (self.max_velocity / self.acceleration_time) * t_relative * t_relative
             else:
                 # 匀速阶段：加速距离 + 匀速距离
                 accel_distance = 0.5 * self.max_velocity * self.acceleration_time
-                const_distance = self.max_velocity * (t - self.acceleration_time)
+                const_distance = self.max_velocity * (t_relative - self.acceleration_time)
                 distance = accel_distance + const_distance
+        
+        # 无限往返模式：反向运动时，需要从终点位置开始计算
+        if self.infinite_round_trip and self.flight_mode != "yaw_rotation":
+            if t_in_cycle >= self.total_time:
+                # 反向运动：计算单程最大距离，然后从终点往回走
+                if self.motion_mode == "constant_speed":
+                    max_distance = self.max_velocity * self.total_time
+                else:
+                    # 变速模式：加速距离 + 匀速距离
+                    accel_distance = 0.5 * self.max_velocity * self.acceleration_time
+                    const_distance = self.max_velocity * (self.total_time - self.acceleration_time)
+                    max_distance = accel_distance + const_distance
+                # 从终点往回走的距离
+                distance = max_distance - distance
         
         # 根据飞行模式计算位置和yaw（速度已计算好）
         if self.flight_mode == "horizontal":
             # 横向飞行：X轴运动，Y轴为0，Z轴为设定高度
-            position = Point(self.start_x + distance * self.direction, self.start_y, self.z_height)
-            velocity_vec = Point(velocity * self.direction, 0, 0)
+            position = Point(self.start_x + distance * current_direction, self.start_y, self.z_height)
+            velocity_vec = Point(velocity * current_direction, 0, 0)
             yaw = self.start_yaw
         elif self.flight_mode == "vertical":
             # 竖向飞行：Y轴运动，X和Z轴为0
-            position = Point(self.start_x, self.start_y + distance * self.direction, self.z_height)
-            velocity_vec = Point(0, velocity * self.direction, 0)
+            position = Point(self.start_x, self.start_y + distance * current_direction, self.z_height)
+            velocity_vec = Point(0, velocity * current_direction, 0)
             yaw = self.start_yaw
         elif self.flight_mode == "z_offset":
             # Z轴偏移测试：Z轴运动，X和Y轴为0
-            position = Point(self.start_x, self.start_y, self.z_height + distance * self.direction)
-            velocity_vec = Point(0, 0, velocity * self.direction)  # Z轴offset模式：X轴速度
+            position = Point(self.start_x, self.start_y, self.z_height + distance * current_direction)
+            velocity_vec = Point(0, 0, velocity * current_direction)  # Z轴offset模式：X轴速度
             yaw = self.start_yaw
         elif self.flight_mode == "yaw_rotation":
             # 原地旋转：保持位置不变，只改变yaw角
             position = Point(self.start_x, self.start_y, self.z_height)
             velocity_vec = Point(0, 0, 0)  # 位置速度为零
-            # 计算yaw角
+            # 计算yaw角（无限往返模式下持续旋转）
+            if self.infinite_round_trip:
             yaw_radians = np.radians(self.yaw_rotation_angle)
             yaw_rate = yaw_radians / self.total_time
             yaw = self.start_yaw + yaw_rate * t
+            else:
+                yaw_radians = np.radians(self.yaw_rotation_angle)
+                yaw_rate = yaw_radians / self.total_time
+                yaw = self.start_yaw + yaw_rate * t_relative
         else:
             # 默认情况
             position = Point(self.start_x, self.start_y, self.z_height)
@@ -302,13 +349,20 @@ class VelocityOffsetTest:
             rospy.sleep(1.0 / self.control_frequency)
                 
         # 第二阶段：开始速度偏移测试
+        if self.infinite_round_trip:
+            print("第二阶段：开始无限往返测试（按Ctrl+C停止）...")
+        else:
         print("第二阶段：开始速度偏移测试...")
         self.start_time = rospy.Time.now()
         rate = rospy.Rate(self.control_frequency)  # 使用配置的控制频率
         
+        last_cycle = -1  # 用于跟踪往返周期
+        
         while not rospy.is_shutdown():
             current_time = (rospy.Time.now() - self.start_time).to_sec()
             
+            # 无限往返模式下不停止，单次模式下检查是否完成
+            if not self.infinite_round_trip:
             if current_time >= self.total_time:
                 print("测试完成！")
                 self.test_completed = True
@@ -321,7 +375,26 @@ class VelocityOffsetTest:
             self.publish_position_command(target_pos, target_vel, target_yaw)
             
             # 打印进度
-            if self.verbose_output and int(current_time * 10) % 10 == 0:  # 每0.1秒打印一次
+            if self.verbose_output:
+                if self.infinite_round_trip:
+                    # 无限往返模式：显示往返周期信息
+                    round_trip_time = 2 * self.total_time
+                    cycle = int(current_time / round_trip_time)
+                    t_in_cycle = current_time % round_trip_time
+                    if cycle != last_cycle:
+                        print(f"开始第 {cycle + 1} 次往返...")
+                        last_cycle = cycle
+                    
+                    if int(current_time * 10) % 10 == 0:  # 每0.1秒打印一次
+                        direction_str = "正向" if t_in_cycle < self.total_time else "反向"
+                        print(f"往返周期: {cycle + 1}, {direction_str}, "
+                              f"周期内时间: {t_in_cycle:.1f}/{round_trip_time:.1f}s, "
+                              f"位置: ({target_pos.x:.3f}, {target_pos.y:.3f}, {target_pos.z:.3f}), "
+                              f"速度: ({target_vel.x:.3f}, {target_vel.y:.3f}, {target_vel.z:.3f}), "
+                              f"Yaw: {np.degrees(target_yaw):.1f}°")
+                else:
+                    # 单次模式：显示常规进度
+                    if int(current_time * 10) % 10 == 0:  # 每0.1秒打印一次
                 print(f"测试进度: {current_time:.1f}/{self.total_time:.1f}s, "
                       f"位置: ({target_pos.x:.3f}, {target_pos.y:.3f}, {target_pos.z:.3f}), "
                       f"速度: ({target_vel.x:.3f}, {target_vel.y:.3f}, {target_vel.z:.3f}), "
@@ -329,8 +402,8 @@ class VelocityOffsetTest:
             
             rate.sleep()
         
-        # 测试完成后保持最后位置
-        if self.test_completed:
+        # 测试完成后保持最后位置（仅单次模式）
+        if self.test_completed and not self.infinite_round_trip:
             print(f"保持最终位置{self.final_position_hold_time}秒...")
             final_pos, _, final_yaw = self.calculate_target_state(self.total_time)
             final_vel = Point(0, 0, 0)  # 保持静止

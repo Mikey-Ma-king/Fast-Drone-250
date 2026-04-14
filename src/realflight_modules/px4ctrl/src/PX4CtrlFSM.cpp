@@ -265,10 +265,15 @@ void PX4CtrlFSM::process()
 
 	case AUTO_LAND:
 	{
+		// Static variables for landing timeout mechanism
+		static ros::Time landed_start_time = ros::Time(0);
+		static bool landed_time_set = false;
+
 		if (!rc_data.is_hover_mode || !odom_is_received(now_time))
 		{
 			state = MANUAL_CTRL;
 			toggle_offboard_mode(false);
+			landed_time_set = false; // Reset timer when exiting AUTO_LAND
 
 			ROS_WARN("[px4ctrl] From AUTO_LAND to MANUAL_CTRL(L1)!");
 		}
@@ -277,10 +282,14 @@ void PX4CtrlFSM::process()
 			state = AUTO_HOVER;
 			set_hov_with_odom();
 			des = get_hover_des();
+			landed_time_set = false; // Reset timer when exiting AUTO_LAND
 			ROS_INFO("[px4ctrl] From AUTO_LAND to AUTO_HOVER(L2)!");
 		}
 		else if (!get_landed())
 		{
+			// Reset landing timer if get_landed() becomes false
+			landed_time_set = false;
+			
 			des = get_takeoff_land_des(-param.takeoff_land.speed);
 		}
 		else
@@ -288,20 +297,41 @@ void PX4CtrlFSM::process()
 			rotor_low_speed_during_land = true;
 
 			static bool print_once_flag = true;
+			
+			// Record the time when get_landed() first becomes true
+			if (!landed_time_set)
+			{
+				landed_start_time = now_time;
+				landed_time_set = true;
+				ROS_INFO("\033[32m[px4ctrl] Local land detection passed, waiting for PX4 confirmation or timeout...\033[32m");
+			}
+
 			if (print_once_flag)
 			{
 				ROS_INFO("\033[32m[px4ctrl] Wait for abount 10s to let the drone arm.\033[32m");
 				print_once_flag = false;
 			}
 
-			if (extended_state_data.current_extended_state.landed_state == mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND) // PX4 allows disarm after this
+			// Timeout threshold: 2 seconds after local land detection
+			const double LAND_DISARM_TIMEOUT = 2.0; // seconds
+			double elapsed_time = (now_time - landed_start_time).toSec();
+			bool timeout_reached = elapsed_time >= LAND_DISARM_TIMEOUT;
+
+			// Try disarm if PX4 confirms landed state OR timeout reached
+			if (extended_state_data.current_extended_state.landed_state == mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND || timeout_reached)
 			{
+				if (timeout_reached && extended_state_data.current_extended_state.landed_state != mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND)
+				{
+					ROS_WARN("[px4ctrl] Timeout reached (%.1fs), forcing disarm without PX4 confirmation!", elapsed_time);
+				}
+
 				static double last_trial_time = 0; // Avoid too frequent calls
 				if (now_time.toSec() - last_trial_time > 1.0)
 				{
 					if (toggle_arm_disarm(false)) // disarm
 					{
 						print_once_flag = true;
+						landed_time_set = false; // Reset for next landing
 						state = MANUAL_CTRL;
 						toggle_offboard_mode(false); // toggle off offboard after disarm
 						ROS_INFO("\033[32m[px4ctrl] AUTO_LAND --> MANUAL_CTRL(L1)\033[32m");
@@ -462,17 +492,35 @@ Desired_State_t PX4CtrlFSM::get_takeoff_land_des(const double speed)
 {
 	ros::Time now = ros::Time::now();
 	double delta_t = (now - takeoff_land.toggle_takeoff_land_time).toSec() - (speed > 0 ? AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME : 0); // speed > 0 means takeoff
-	// takeoff_land.last_set_cmd_time = now;
-
-	// takeoff_land.start_pose(2) += speed * delta_t;
-
+	
+	// Velocity decay time constant (seconds) - horizontal velocity decays to ~37% after this time
+	const double VEL_DECAY_TIME = 5.0; // 2 seconds decay time constant
+	
 	Desired_State_t des;
-	des.p = takeoff_land.start_pose.head<3>() + Eigen::Vector3d(0, 0, speed * delta_t);
-	// double v_x = max(min(0.5*(takeoff_land.start_pose.x() - odom_data.p.x()),speed),-speed);
-	// double v_y = max(min(0.5*(takeoff_land.start_pose.y() - odom_data.p.y()),speed),-speed);
-	double v_x = 0;
-	double v_y = 0;
-	des.v = Eigen::Vector3d(0, 0, speed);
+	
+	// Calculate decayed horizontal velocity (exponential decay)
+	Eigen::Vector2d start_vel_xy = takeoff_land.start_vel.head<2>();
+	double decay_factor = exp(-delta_t / VEL_DECAY_TIME);
+	Eigen::Vector2d vel_xy = start_vel_xy * decay_factor;
+	
+	// Calculate position by integrating velocity
+	// For exponential decay: integral of v0*exp(-t/tau) = v0*tau*(1 - exp(-t/tau))
+	Eigen::Vector2d pos_offset_xy;
+	if (delta_t > 0 && VEL_DECAY_TIME > 0)
+	{
+		pos_offset_xy = start_vel_xy * VEL_DECAY_TIME * (1.0 - decay_factor);
+	}
+	else
+	{
+		pos_offset_xy = Eigen::Vector2d::Zero();
+	}
+	
+	// Set desired position: start position + horizontal offset from velocity + vertical offset from speed
+	des.p = takeoff_land.start_pose.head<3>() + Eigen::Vector3d(pos_offset_xy(0), pos_offset_xy(1), speed * delta_t);
+	
+	// Set desired velocity: decayed horizontal velocity + vertical speed
+	des.v = Eigen::Vector3d(vel_xy(0), vel_xy(1), speed);
+	
 	des.a = Eigen::Vector3d::Zero();
 	des.j = Eigen::Vector3d::Zero();
 	des.yaw = takeoff_land.start_pose(3);
@@ -518,6 +566,7 @@ void PX4CtrlFSM::set_start_pose_for_takeoff_land(const Odom_Data_t &odom)
 {
 	takeoff_land.start_pose.head<3>() = odom_data.p;
 	takeoff_land.start_pose(3) = get_yaw_from_quaternion(odom_data.q);
+	takeoff_land.start_vel = odom_data.v;
 
 	takeoff_land.toggle_takeoff_land_time = ros::Time::now();
 }

@@ -48,12 +48,7 @@ extern bool last_cmd_initialized;
 extern ros::Time heartbeat_time_;
 bool odom_received_ = false;
 extern Eigen::Vector2d hc14_dog_acc;
-extern Eigen::Vector2d hc14_dog_jerk_filtered;
-extern Eigen::Vector2d last_hc14_dog_acc;
-extern ros::Time last_hc14_dog_acc_time;
-extern bool hc14_dog_acc_initialized;
-extern double jerk_filter_alpha_x;
-extern double jerk_filter_alpha_y;
+extern double hc14_perception_confidence;
 
 void initCallback(const ros::TimerEvent &event) {
     if (!odom_received_)
@@ -270,35 +265,11 @@ void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     hc14_offset_yaw_ready = (msg->pose.pose.orientation.x > 0.5);
     
     // 从orientation.y和z读取加速度（世界坐标系）
-    Eigen::Vector2d prev_acc = hc14_dog_acc;  // 保存之前的加速度
     hc14_dog_acc.x() = msg->pose.pose.orientation.y;
     hc14_dog_acc.y() = msg->pose.pose.orientation.z;
     
-    // 计算狗的jerk（加速度的变化率）
-    ros::Time current_time = ros::Time::now();
-    if (hc14_dog_acc_initialized) {
-        double dt = (current_time - last_hc14_dog_acc_time).toSec();
-        if (dt > 0.001 && dt < 1.0) {  // 避免除零和异常大的时间间隔
-            // 计算瞬时jerk
-            Eigen::Vector2d instant_jerk;
-            instant_jerk.x() = (hc14_dog_acc.x() - prev_acc.x()) / dt;
-            instant_jerk.y() = (hc14_dog_acc.y() - prev_acc.y()) / dt;
-            
-            // 线性滤波：y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
-            hc14_dog_jerk_filtered.x() = jerk_filter_alpha_x * instant_jerk.x() + 
-                                          (1.0 - jerk_filter_alpha_x) * hc14_dog_jerk_filtered.x();
-            hc14_dog_jerk_filtered.y() = jerk_filter_alpha_y * instant_jerk.y() + 
-                                          (1.0 - jerk_filter_alpha_y) * hc14_dog_jerk_filtered.y();
-        }
-    } else {
-        // 首次初始化
-        hc14_dog_acc_initialized = true;
-        hc14_dog_jerk_filtered.setZero();
-    }
-    
-    // 更新上一次的加速度和时间
-    last_hc14_dog_acc = hc14_dog_acc;
-    last_hc14_dog_acc_time = current_time;
+    // 从twist.angular.z读取感知置信度
+    hc14_perception_confidence = msg->twist.twist.angular.z;
 
     hc14_dog_pos_count++;  // 收到包时计数器+1 
 }

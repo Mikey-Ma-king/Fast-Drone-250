@@ -176,7 +176,7 @@ DogPosProcessor::DogPosProcessor()
       last_dog_vel_time_(0.0),
       acc_filter_gain_(0.3),
       dog_acc_initialized_(false),
-      kf_(0.1, 0.01),
+      kf_(0.01, 0.1),
       kf_enabled_(true),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
@@ -186,14 +186,14 @@ DogPosProcessor::DogPosProcessor()
       offset_history_max_size_(10) {  // 历史记录最大长度：100个样本（约5秒，50ms周期）
     
     // 参数（完全按照traj_server.cpp的设置）
-    yaw_filter_gain_ = 0.1;  // yaw offset滤波增益
+    yaw_filter_gain_ = 0.04;  // yaw offset滤波增益
     yaw_stable_threshold_ = M_PI * 5.0 / 180.0;  // 5度，yaw稳定阈值
     yaw_exceed_threshold_ = M_PI * 45.0 / 180.0;  // 45度，yaw超限阈值
     yaw_exceed_max_count_ = 5;  // yaw超限最大计数
     pos_stable_threshold_ = 0.05;  // 5cm，位置稳定阈值
     pos_exceed_threshold_ = 0.3;  // 30cm，位置超限阈值
     pos_exceed_max_count_ = 5;  // 位置超限最大计数
-    pos_filter_gain_ = 0.2;  // 位置滤波增益
+    pos_filter_gain_ = 0.04;  // 位置滤波增益
     aoa_pos_filter_gain_ = 0.05;  // AOA位置滤波增益（比pos_filter_gain小）
     aoa_pos_step_limit_ = 0.02;   // AOA单次迭代上限（米）
     
@@ -204,7 +204,7 @@ DogPosProcessor::DogPosProcessor()
     aoa_min_distance_ = 3.0;  // m
 
     // 仿真模式：camera_offset为0
-    simulate_mode_ = false;
+    simulate_mode_ = true;
     
     // 发布者 - 使用Odometry格式
     dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);

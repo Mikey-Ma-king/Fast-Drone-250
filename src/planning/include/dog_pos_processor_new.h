@@ -39,8 +39,6 @@ public:
 private:
     // 工具函数
     double normalizeAngle(double angle);
-    double calculateYawOffsetVariance();  // 计算yaw_offset历史记录的方差
-    double calculatePosOffsetVariance();   // 计算pos_offset历史记录的方差（协方差矩阵的迹）
     
     // 回调函数
     void rawDogPosCallback(const nav_msgs::Odometry::ConstPtr& msg);
@@ -57,7 +55,7 @@ private:
     
     // 内部函数
     void updateDogYawRate(double delta_yaw);
-    void updateDogAcc(const Eigen::Vector3d& delta_vel, double dt = -1.0);  // 更新加速度，dt<=0时自动计算
+    void updateDogAcc(const Eigen::Vector3d& delta_vel);
     void publishProcessedDogPos();
     
     // ROS节点
@@ -93,10 +91,10 @@ private:
     double pos_filter_gain_;
     double aoa_pos_filter_gain_;  // AOA位置滤波增益（比pos_filter_gain小）
     double aoa_pos_step_limit_;   // AOA位置偏移单次迭代上限（米）
-    double camera_offset_;
     double aoa_min_distance_;
-    
     double flow_height_bias_;
+    double pos_offset_delay_time_;  // 位置偏移计算的延迟时间（秒）
+    double raw_dog_pos_publish_interval_;  // raw_dog_pos发包间隔（秒），用于计算延迟帧数
     
     // 状态变量
     double yaw_offset_;
@@ -105,11 +103,6 @@ private:
     bool precise_pos_offset_ready_;
     int yaw_exceed_timer_;
     int pos_exceed_timer_;
-    
-    // 历史记录用于计算方差
-    std::deque<double> yaw_offset_history_;
-    std::deque<Eigen::Vector3d> pos_offset_history_;
-    int offset_history_max_size_;  // 历史记录最大长度
     double* saved_yaw_diff_;  // 使用指针，nullptr表示未设置
     bool initialized_;
     bool simulate_mode_;  // 仿真模式：直接输出target_ekf作为dog_pos_processed
@@ -118,12 +111,14 @@ private:
     nav_msgs::Odometry::ConstPtr raw_dog_pos_;
     Eigen::Vector3d raw_dog_vel_;
     double raw_dog_yaw_;
-    double raw_dog_pitch_;  // pitch角度（弧度）
-    double raw_dog_roll_;   // roll角度（弧度）
     bool raw_dog_pos_received_;
     unsigned int raw_dog_pos_count_;
     unsigned int last_raw_dog_pos_count_;
     int last_dog_pos_timer_;
+    std::deque<nav_msgs::Odometry> raw_dog_pos_history_;  // 历史raw_dog_pos消息队列（保存完整msg）
+    
+    // 辅助函数：根据延迟帧数（可能是小数）获取历史数据（支持加权平均插值）
+    bool getDelayedRawDogPos(double delay_frames, Eigen::Vector3d& pos, double& yaw);
     
     // VINS数据
     double vins_yaw_;
@@ -136,8 +131,6 @@ private:
     
     // 目标数据
     double target_dog_yaw_;
-    double target_dog_pitch_;  // pitch角度（弧度）
-    double target_dog_roll_;   // roll角度（弧度）
     Eigen::Vector3d target_dog_pos_;
     bool target_receive_;
     unsigned int target_count_;
@@ -145,7 +138,6 @@ private:
     int last_target_timer_;
     int last_target_loss_timer_;
     unsigned int last_target_loss_count_;
-    ros::Time target_ekf_last_time_;  // target_ekf最新包的时间
     // AOA数据
     bool aoa_received_;
     unsigned int aoa_count_;
@@ -169,18 +161,10 @@ private:
     // 速度相关
     bool dog_vel_initialized_;
     double final_dog_yaw_rate_;
-    double last_dog_yaw_time_;       // yaw角速度上一次的时间
-    double last_dog_pitch_time_;    // pitch角速度上一次的时间
-    double last_dog_roll_time_;     // roll角速度上一次的时间
+    double last_dog_yaw_time_;
     double yaw_rate_filter_gain_;
     bool dog_yaw_rate_initialized_;
     Eigen::Vector3d last_dog_vel_;  // 上一次滤波后的速度，用于计算加速度
-    // 用于在publishProcessedDogPos中计算角速度和加速度的上一次值
-    double last_final_dog_yaw_;      // 上一次的final_dog_yaw_，用于计算yaw角速度
-    double last_final_dog_pitch_;   // 上一次的final_dog_pitch_，用于计算pitch角速度
-    double last_final_dog_roll_;    // 上一次的final_dog_roll_，用于计算roll角速度
-    Eigen::Vector3d last_final_dog_vel_;  // 上一次的final_dog_vel_，用于计算加速度
-    ros::Time last_publish_time_;   // 上一次发布的时间，用于计算时间差
     
     // 加速度相关
     Eigen::Vector3d final_dog_acc_;

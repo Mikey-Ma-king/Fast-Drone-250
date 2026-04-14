@@ -73,6 +73,7 @@ public:
 	double low_voltage;
 
 	bool use_bodyrate_ctrl;
+	bool use_so3_control;  // 是否使用SE(3)控制（true: SE(3)控制, false: 欧拉角控制）
 	// bool print_dbg;
 
 	Parameter_t();

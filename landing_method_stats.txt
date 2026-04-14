@@ -1,0 +1,5 @@
+Method\tSuccessRate\tLandingTimeMean(s)\tLandingTimeStd(s)\tErrorXYMean(m)\tErrorXYStd(m)
+EO\t2/10 (0.20)\t24.25\t11.39\t0.36\t0.58
+IL\t0/10 (0.00)\t9.41\t9.68\t1.12\t0.89
+Ours\t5/10 (0.50)\t27.75\t12.05\t0.28\t0.57
+
