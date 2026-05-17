@@ -13,6 +13,8 @@ roslaunch svo_ros euroc_vio_stereo.launch &
 
 sleep 5
 
+rostopic pub -1  /takeoff_flag quadrotor_msgs/TakeoffLand "takeoff_land_cmd: 1"
+
 source devel/setup.bash
 sh shfiles/takeoff.sh&
 wait

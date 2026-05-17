@@ -701,15 +701,15 @@ void cmdCallback(const ros::TimerEvent &e) {
   if (triger_mode == 2){
     // yaw_mode = 2;
     yaw_mode = 1;
-  } else if ((triger_mode == 0) && (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 5.0)){
+  } else if ((triger_mode == 0) && (Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() > 5.0)){
     yaw_mode = 0;
-  } else if (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() < 3.0){
+  } else if (Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() < 3.0){
     yaw_mode = 1;
   }
 
   if (yaw_mode == 0) {
     // MPC模式：计算飞机对着狗的方向
-    double yaw_to_dog = std::atan2(target_p.y() - vins_p.y(), target_p.x() - vins_p.x());
+    double yaw_to_dog = std::atan2(hc14_dog_pos.y() - vins_p.y(), hc14_dog_pos.x() - vins_p.x());
     angle_diff = yaw_to_dog - vins_yaw;
   } else if (yaw_mode == 1) {
     angle_diff = target_yaw - vins_yaw;
@@ -792,18 +792,18 @@ void cmdCallback(const ros::TimerEvent &e) {
     if (triger_mode == 1)
     {
       if (reflight_complete){
-        targetz = std::min(target_p.z() + land_height_limit[1], std::max(target_p.z() + land_height_limit[0], vins_p.z()));
-        target_vz = target_v.z();
+        targetz = std::min(hc14_dog_pos.z() + land_height_limit[1], std::max(hc14_dog_pos.z() + land_height_limit[0], vins_p.z()));
+        target_vz = hc14_dog_vel.z();
       } else {
         // 计算目标速度
-        if (mode_vins_z < target_p.z() + land_height_limit[0]){
+        if (mode_vins_z < hc14_dog_pos.z() + land_height_limit[0]){
           mode_vins_vel_z = 0.05;
-          if (vins_p.z() > target_p.z() + land_height_limit[0]){
+          if (vins_p.z() > hc14_dog_pos.z() + land_height_limit[0]){
             reflight_complete = true;
           }
-        } else if (mode_vins_z > target_p.z() + land_height_limit[1]){
+        } else if (mode_vins_z > hc14_dog_pos.z() + land_height_limit[1]){
           mode_vins_vel_z = -0.05;
-          if (vins_p.z() < target_p.z() + land_height_limit[1]){
+          if (vins_p.z() < hc14_dog_pos.z() + land_height_limit[1]){
             reflight_complete = true;
           }
         }
@@ -813,14 +813,14 @@ void cmdCallback(const ros::TimerEvent &e) {
         
         // 持续更新mode_vins_z（速度乘以dt）
         mode_vins_z += mode_vins_vel_z * accel_dt;
-        target_vz = target_v.z() + mode_vins_vel_z;
+        target_vz = hc14_dog_vel.z() + mode_vins_vel_z;
         targetz = mode_vins_z;
       }
     }
     else if (triger_mode == 2)
     {
       mode_vins_z += land_vel * accel_dt;
-      target_vz = target_v.z() + land_vel;
+      target_vz = hc14_dog_vel.z() + land_vel;
       targetz = mode_vins_z;
     }
   }
@@ -982,7 +982,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     // }
     
     // 丢失目标之后如果target_p变了怎么办？
-    if ((flow_z < 0.1) && (flow_z > 0.0) && (std::fabs(vins_p.z() - target_p.z()) < 0.5))
+    if ((flow_z < 0.1) && (flow_z > 0.0) && (std::fabs(vins_p.z() - hc14_dog_pos.z()) < 0.5))
         land_lock_timer += 1;
     else
         land_lock_timer = std::max(land_lock_timer - 0.5, 0.0);
@@ -1231,8 +1231,8 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
       if (hc14_offset_pos_ready && 
           hc14_offset_yaw_ready && 
           target_receive && 
-          vins_p.z() > target_p.z() + land_height_limit[0] &&
-          Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() < 0.8 && 
+          vins_p.z() > hc14_dog_pos.z() + land_height_limit[0] &&
+          Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() < 0.8 && 
           angle_diff < 30.0/180.0 * M_PI)
       {
           geometry_msgs::PoseStamped mode_msg;
@@ -1245,10 +1245,10 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     else if (triger_mode == 1){
       if (hc14_offset_yaw_ready && 
           hc14_offset_pos_ready &&
-          std::fabs(target_v.x() - vins_v.x()) < 0.2 && 
-          std::fabs(target_v.y() - vins_v.y()) < 0.2 && 
-          std::fabs(target_p.x() - vins_p.x()) < 0.4 &&
-          std::fabs(target_p.y() - vins_p.y()) < 0.4 &&
+          std::fabs(hc14_dog_vel.x() - vins_v.x()) < 0.2 && 
+          std::fabs(hc14_dog_vel.y() - vins_v.y()) < 0.2 && 
+          std::fabs(hc14_dog_pos.x() - vins_p.x()) < 0.4 &&
+          std::fabs(hc14_dog_pos.y() - vins_p.y()) < 0.4 &&
           angle_diff < 30.0/180.0 * M_PI)
       {
         land_timer ++;
@@ -1261,7 +1261,7 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
           std::cout << "land_mode: true" << std::endl;
           land_timer = 0;
         }
-      }else if (Eigen::Vector2d(vins_p.x() - target_p.x(), vins_p.y() - target_p.y()).norm() > 2.0){ // 可能遇到障碍时切回mpc避障
+      }else if (Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() > 2.0){ // 可能遇到障碍时切回mpc避障
         geometry_msgs::PoseStamped mode_msg;
         mode_msg.header.stamp = ros::Time::now();
         mode_msg.pose.orientation.w = 0;
@@ -1276,11 +1276,11 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
       if (!(
             hc14_offset_pos_ready &&
             hc14_offset_yaw_ready &&
-            std::fabs(target_v.x() - vins_v.x()) < 0.65 && 
-            std::fabs(target_v.y() - vins_v.y()) < 0.65 && 
-            std::fabs(target_p.x() - vins_p.x()) < 0.55 &&
-            std::fabs(target_p.y() - vins_p.y()) < 0.55 &&
-            vins_p.z() > target_p.z() - 0.2 &&
+            std::fabs(hc14_dog_vel.x() - vins_v.x()) < 0.65 && 
+            std::fabs(hc14_dog_vel.y() - vins_v.y()) < 0.65 && 
+            std::fabs(hc14_dog_pos.x() - vins_p.x()) < 0.2 &&
+            std::fabs(hc14_dog_pos.y() - vins_p.y()) < 0.2 &&
+            vins_p.z() > hc14_dog_pos.z() - 0.2 &&
             angle_diff < 45.0/180.0 * M_PI ))
       {
         geometry_msgs::PoseStamped mode_msg;

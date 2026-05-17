@@ -177,7 +177,7 @@ DogPosProcessor::DogPosProcessor()
       acc_filter_gain_(0.3),
       dog_acc_initialized_(false),
       kf_(0.1, 0.01),
-      kf_enabled_(true),
+      kf_enabled_(false),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
       yaw_filter_initialized_(false),

@@ -1012,33 +1012,33 @@ void read::reda(ros::NodeHandle& nh) {
                     averagePosition += (position * 0.5);
                 }
                 else if (currentMarkerId == 0){
-                    position.x() = position.x() - 0.193*std::cos(fin_yaw) + 0.136*std::sin(fin_yaw);
-                    position.y() = position.y() - 0.193*std::sin(fin_yaw) - 0.136*std::cos(fin_yaw);
+                    position.x() = position.x() - 0.195*std::cos(fin_yaw) + 0.142*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.195*std::sin(fin_yaw) - 0.142*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 1){
-                    position.x() = position.x() + 0.193*std::cos(fin_yaw) + 0.136*std::sin(fin_yaw);
-                    position.y() = position.y() + 0.193*std::sin(fin_yaw) - 0.136*std::cos(fin_yaw);
+                    position.x() = position.x() + 0.195*std::cos(fin_yaw) + 0.142*std::sin(fin_yaw);
+                    position.y() = position.y() + 0.195*std::sin(fin_yaw) - 0.142*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 2){
-                    position.x() = position.x() + 0.193*std::cos(fin_yaw) - 0.136*std::sin(fin_yaw);
-                    position.y() = position.y() + 0.193*std::sin(fin_yaw) + 0.136*std::cos(fin_yaw);
+                    position.x() = position.x() + 0.195*std::cos(fin_yaw) - 0.142*std::sin(fin_yaw);
+                    position.y() = position.y() + 0.195*std::sin(fin_yaw) + 0.142*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 3){
-                    position.x() = position.x() - 0.193*std::cos(fin_yaw) - 0.136*std::sin(fin_yaw);
-                    position.y() = position.y() - 0.193*std::sin(fin_yaw) + 0.136*std::cos(fin_yaw);
+                    position.x() = position.x() - 0.195*std::cos(fin_yaw) - 0.142*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.195*std::sin(fin_yaw) + 0.142*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 4){
-                    position.x() = position.x() + 0.136*std::sin(fin_yaw);
-                    position.y() = position.y() - 0.136*std::cos(fin_yaw);
+                    position.x() = position.x() + 0.142*std::sin(fin_yaw);
+                    position.y() = position.y() - 0.142*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
                 else if (currentMarkerId == 5){
-                    position.x() = position.x() + 0.136*std::sin(fin_yaw);
-                    position.y() = position.y() - 0.136*std::cos(fin_yaw);
+                    position.x() = position.x() - 0.142*std::sin(fin_yaw);
+                    position.y() = position.y() + 0.142*std::cos(fin_yaw);
                     averagePosition += (position * 0.65);
                 }
 
@@ -1117,7 +1117,7 @@ void read::reda(ros::NodeHandle& nh) {
                 fin_roll += 2 * M_PI;
 
             position = averagePosition / weight_count;
-            if((ros::Time::now() - target_start_time).toSec() > 1.0)
+            if((ros::Time::now() - target_start_time).toSec() > 0.2)
               {
                   pos.clear();
               }
@@ -1167,13 +1167,17 @@ void read::reda(ros::NodeHandle& nh) {
             //降落位置识别
               averge_vel = {0, 0, 0};
               glo_pos = position;
-              if (pos.size() >= 3 || true) {
-                    double filtered_x = kf_x.filter(avg.x());
-                    double filtered_y = kf_y.filter(avg.y());
-                    double filtered_z = kf_z.filter(avg.z());
+              if (pos.size() >= 3) {
+                    // double filtered_x = kf_x.filter(avg.x());
+                    // double filtered_y = kf_y.filter(avg.y());
+                    // double filtered_z = kf_z.filter(avg.z());
                     // double filtered_x = position.x();
                     // double filtered_y = position.y();
                     // double filtered_z = position.z();
+                    double filtered_x = avg.x();
+                    double filtered_y = avg.y();
+                    double filtered_z = avg.z();
+
 
                     // 基于VINS的机体朝向，将最终位置向机体左侧偏移2cm
                     // 从VINS旋转矩阵R1获取yaw（机体朝向，世界系）
