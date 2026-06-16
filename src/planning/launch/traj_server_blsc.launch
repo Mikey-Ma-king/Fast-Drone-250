@@ -1,0 +1,14 @@
+<launch>
+  <node name="traj_server" pkg="planning" type="planning" output="screen">
+    <param name="use_blsc" value="true"/>
+    <param name="blsc_lambda" value="0.5"/>
+    <param name="blsc_boundary_layer" value="0.5"/>
+    <param name="blsc_eta" value="0.1"/>
+    <param name="blsc_c_hat" value="0.15"/>
+    <param name="blsc_c_tilde" value="0.05"/>
+    <param name="blsc_b_hat" value="1.0"/>
+    <param name="blsc_vw_x" value="0.0"/>
+    <param name="blsc_vw_y" value="0.0"/>
+    <param name="blsc_sigma" value="0.0"/>
+  </node>
+</launch>

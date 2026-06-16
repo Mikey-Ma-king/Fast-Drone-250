@@ -34,6 +34,13 @@ dog_pos_v = np.array([0.0,0.0,0.0])
 dog_pos_yaw = 0.0
 dog_pos_acc = np.array([0.0,0.0])  # 狗加速度（世界坐标系，x和y）
 dog_pos_received_ = 0
+
+# command_pos相关变量（mode_manager == -2 时使用）
+command_pos_p = np.array([0.0,0.0,0.0])
+command_pos_v = np.array([0.0,0.0,0.0])
+command_pos_yaw = 0.0
+command_pos_received_ = 0
+
 last_target_ekf_time = 0.0
 hc14_offset_yaw_ready = False
 hc14_offset_pos_ready = False
@@ -92,6 +99,7 @@ class all_Subscriber:
         # 订阅 /vins_fusion/imu_propagate 主题
         self.pose_sub = rospy.Subscriber('/target_ekf_odom', Odometry, self.pose_cb0)
         self.dog_pos_sub = rospy.Subscriber('/dog_pos_processed', Odometry, self.dog_pos_cb)
+        self.command_pos_sub = rospy.Subscriber('/command_pos', Odometry, self.command_pos_cb)
         self.vins_sub = rospy.Subscriber('/vins_fusion/imu_propagate', Odometry, self.vins_cb)
         self.track_sub = rospy.Subscriber('/mode_manager', PoseStamped, self.mode_cb)
         # 用于保存T1和R1
@@ -160,6 +168,23 @@ class all_Subscriber:
 
         dog_pos_received_ = 1
 
+    def command_pos_cb(self, msg):
+        global command_pos_p
+        global command_pos_v
+        global command_pos_yaw
+        global command_pos_received_
+
+        command_pos_p[0] = msg.pose.pose.position.x
+        command_pos_p[1] = msg.pose.pose.position.y
+        command_pos_p[2] = msg.pose.pose.position.z
+
+        command_pos_v[0] = msg.twist.twist.linear.x
+        command_pos_v[1] = msg.twist.twist.linear.y
+        command_pos_v[2] = msg.twist.twist.linear.z
+
+        command_pos_yaw = msg.pose.pose.orientation.w
+        command_pos_received_ = 1
+
     def vins_cb(self, msg):
         global vins_p
         global vins_v
@@ -192,14 +217,21 @@ class all_Subscriber:
     def mode_cb(self, msg):
         """
         使用 /mode_manager 话题控制:
-        - orientation.w == 1: 开启触发，并重置内部状态
-        - orientation.w == 0: 关闭触发，重置状态
-        PoseStamped 其他字段忽略
+        - orientation.w == 0:  triger=1，追踪 /dog_pos_processed
+        - orientation.w == -2: triger=2，追踪 /command_pos
+        - 其他: triger=0，关闭MPC
         """
-        global triger, target_received_, dog_pos_received_, reset_mpc
-        triger = msg.pose.orientation.w == 0
+        global triger, target_received_, dog_pos_received_, command_pos_received_, reset_mpc
+        mode_w = msg.pose.orientation.w
+        if mode_w == 0:
+            triger = 1
+        elif mode_w == -2:
+            triger = 2
+        else:
+            triger = 0
         target_received_ = 0
         dog_pos_received_ = 0
+        command_pos_received_ = 0
         reset_mpc = 1
 
 class TrajectoryVisualizer:
@@ -438,9 +470,16 @@ mpc = DroneMPC(N = 50)
 # mpc.v_max = np.array([2.0, 2.0, 0.8])  # 速度限制
 # mpc.a_max = np.array([1.3, 1.3, 0.6])  # 加速度限制
 # mpc.Q = np.diag([15, 15, 10, 3, 3, 0])  # 位置权重
-mpc.v_max = np.array([1.5, 1.5, 0.8])  # 速度限制
-mpc.a_max = np.array([0.8, 0.8, 0.6])  # 加速度限制
-mpc.Q = np.diag([10, 10, 20, 5, 5, 5])  # 位置权重
+MPC_V_MAX_DEFAULT = np.array([1.5, 1.5, 0.8])
+MPC_V_MAX_AGENT = np.array([0.3, 0.3, 0.3])
+MPC_A_MAX_DEFAULT = np.array([0.8, 0.8, 0.6])
+MPC_A_MAX_AGENT = np.array([0.3, 0.3, 0.3])  # agent/command_pos：更柔的加速度
+# Q 对角：[px, py, pz, vx, vy, vz]
+MPC_Q_DEFAULT = np.diag([10.0, 10.0, 20.0, 5.0, 5.0, 5.0])
+MPC_Q_AGENT = np.diag([5.0, 5.0, 5.0, 8.0, 8.0, 8.0])  # agent：位置略柔、速度略重
+mpc.v_max = MPC_V_MAX_DEFAULT.copy()
+mpc.a_max = MPC_A_MAX_DEFAULT.copy()
+mpc.Q = MPC_Q_DEFAULT.copy()
 # drone_state = np.array([0, 0, 0.4, 0, 0, 0])  # 初始状态 [px,py,pz,vx,vy,vz]
 rate = rospy.Rate(80)
 MPC_clcyle = time.time() - 10
@@ -467,14 +506,16 @@ def run_while_loop():
     global target_p_dist,last_target_p_dis,last_last_target_p_dis
     global target_p_dis
     global dog_pos_p, dog_pos_v, dog_pos_yaw, dog_pos_received_, hc14_offset_yaw_ready, hc14_offset_pos_ready
+    global command_pos_p, command_pos_v, command_pos_yaw, command_pos_received_
     global aoa_fast_v_max, aoa_slow_v_max
     global triger
     global reset_mpc
     global target_received_
 
     while not rospy.is_shutdown():
-        # 等待条件：仿真模式下只需要triger，正常模式需要triger和dog_pos_received_
-        while triger != 1 or not (dog_pos_received_ and hc14_offset_yaw_ready):
+        while (triger == 1 and not (dog_pos_received_ and hc14_offset_yaw_ready)) \
+            or (triger == 2 and not command_pos_received_) \
+            or (triger == 0):
             time.sleep(0.1)
         # 如果有起飞重置请求，则在主循环中清空轨迹和历史记录
         if reset_mpc == 1:
@@ -485,10 +526,21 @@ def run_while_loop():
             target_vel_history = []
             target_vel_history_times = []
             reset_mpc = 0
-        # Target选择逻辑：根据仿真模式选择使用target_p/target_v或dog_pos_p/dog_pos_v
-        current_target_p = dog_pos_p.copy()
-        current_target_v = dog_pos_v.copy()
-        current_target_yaw = dog_pos_yaw
+        # triger==1: dog_pos_processed; triger==2: command_pos (mode_manager.w == -2)
+        if triger == 2:
+            mpc.v_max = MPC_V_MAX_AGENT.copy()
+            mpc.a_max = MPC_A_MAX_AGENT.copy()
+            mpc.Q = MPC_Q_AGENT.copy()
+            current_target_p = command_pos_p.copy()
+            current_target_v = command_pos_v.copy()
+            current_target_yaw = command_pos_yaw
+        else:
+            mpc.v_max = MPC_V_MAX_DEFAULT.copy()
+            mpc.a_max = MPC_A_MAX_DEFAULT.copy()
+            mpc.Q = MPC_Q_DEFAULT.copy()
+            current_target_p = dog_pos_p.copy()
+            current_target_v = dog_pos_v.copy()
+            current_target_yaw = dog_pos_yaw
 
         # 在狗位置基础上添加提前量：沿着vins到狗的方向延伸0.5m
         # dog_to_vins = current_target_p[:2] - vins_p[:2]  # 狗位置到vins位置的向量（2D）
@@ -505,7 +557,14 @@ def run_while_loop():
         # print("target_p:",current_target_p)
         target_p_dis[0] = current_target_p[0]
         target_p_dis[1] = current_target_p[1]
-        target_p_dis[2] = min(current_target_p[2] + land_height_limit[1],max(current_target_p[2] + land_height_limit[0], vins_p[2]))
+        if triger == 2:
+            # agent / command_pos：不施加 land_height_limit
+            target_p_dis[2] = current_target_p[2]
+        else:
+            target_p_dis[2] = min(
+                current_target_p[2] + land_height_limit[1],
+                max(current_target_p[2] + land_height_limit[0], vins_p[2]),
+            )
         
         if x_opt is not None:
             drone_state,accel = traj_get_state(x_opt, u_opt, int((time.time() - MPC_clcyle + shift)/mpc.dt)*mpc.dt, mpc.dt)

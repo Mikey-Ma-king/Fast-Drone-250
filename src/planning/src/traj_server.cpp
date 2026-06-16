@@ -87,6 +87,8 @@ Eigen::Vector3d hc14_dog_vel{0,0,0};
 Eigen::Vector3d hc14_dog_pos{0,0,0};
 double hc14_dog_yaw = 0.0;
 double hc14_dog_yaw_rate = 0.0;  // 狗通信角速度
+double command_pos_yaw = 0.0;
+bool command_pos_received = false;
 Eigen::Vector2d hc14_dog_acc{0,0};  // 狗加速度（世界坐标系，x和y）
 Eigen::Vector2d hc14_dog_jerk_filtered{0,0};  // 滤波后的狗jerk
 Eigen::Vector2d last_hc14_dog_acc{0,0};  // 上一次的狗加速度，用于计算jerk
@@ -183,7 +185,7 @@ double acc_feedforward_sat_value_y = 1.0;  // 加速度前馈饱和值（y方向
 double jerk_feedforward_sat_threshold_y = 0.3;  // jerk前馈饱和阈值（y方向）
 double jerk_feedforward_sat_value_y = 1.0;  // jerk前馈饱和值（y方向）
 
-double z_p = 0.25;
+double z_p = 0.1;
 double z_i = 0.0;
 double z_d = 0.0;
 double z_d_max = 0.1;
@@ -672,11 +674,11 @@ std::pair<Eigen::VectorXd, Eigen::Vector3d> trajGetState(const std::vector<Eigen
 void cmdCallback(const ros::TimerEvent &e) {
   // if (!(hc14_dog_pos_received && hc14_offset_yaw_ready))
   //   return;
-  if (triger_mode != -1 && triger_mode != 0 && triger_mode != 1 && triger_mode != 2)
+  if (triger_mode != -1 && triger_mode != 0 && triger_mode != 1 && triger_mode != 2 && triger_mode != -2)
     return;
   if (triger_mode == -1)
     return;
-  if (triger_mode == 0 && !traj_initialized)
+  if ((triger_mode == 0 || triger_mode == -2) && !traj_initialized)
     return;
   if ((triger_mode == 1 || triger_mode == 2) && !(hc14_dog_pos_received && hc14_offset_yaw_ready))
     return;
@@ -694,14 +696,21 @@ void cmdCallback(const ros::TimerEvent &e) {
   double angle_diff = 0;
 
 
-  // 目前mpc没有控制yaw，还使用目标的yaw
-  target_yaw = hc14_dog_yaw;
+  // MPC/agent 模式下的目标 yaw
+  if (triger_mode == -2) {
+    target_yaw = command_pos_yaw;
+  } else {
+    target_yaw = hc14_dog_yaw;
+  }
 
   static int yaw_mode = 0;
   if (triger_mode == 2){
     // yaw_mode = 2;
     yaw_mode = 1;
-  } else if ((triger_mode == 0) && (Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() > 5.0)){
+  } else if (triger_mode == -2) {
+  // agent 模式：始终跟随 /command_pos 的 yaw
+    yaw_mode = 1;
+  } else if (triger_mode == 0 && (Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() > 5.0)){
     yaw_mode = 0;
   } else if (Eigen::Vector2d(vins_p.x() - hc14_dog_pos.x(), vins_p.y() - hc14_dog_pos.y()).norm() < 3.0){
     yaw_mode = 1;
@@ -723,7 +732,7 @@ void cmdCallback(const ros::TimerEvent &e) {
     angle_diff += 2 * M_PI;
   }
 
-  if (triger_mode == 0) {
+  if ((triger_mode == 0 || triger_mode == -2)) {
     target_vx = mpc_v.x();
     target_vy = mpc_v.y();
     target_vz = mpc_v.z();
@@ -836,7 +845,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   }
 
   double cos_yaw, sin_yaw;
-  if (triger_mode == 0) {
+  if ((triger_mode == 0 || triger_mode == -2)) {
     cos_yaw = cos(0.0);
     sin_yaw = sin(0.0);
   } else {
@@ -859,7 +868,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   double current_x_d, current_y_d, current_z_d, current_pos_x_d, current_pos_y_d;
   double current_x_d_max, current_y_d_max, current_z_d_max, current_pos_x_d_max, current_pos_y_d_max;
   
-  if (triger_mode == 0) {
+  if ((triger_mode == 0 || triger_mode == -2)) {
     current_x_p = mpc_x_p;
     current_y_p = mpc_y_p;
     current_z_p = mpc_z_p;
@@ -905,8 +914,8 @@ void cmdCallback(const ros::TimerEvent &e) {
 
   // 根据trigger_mode选择使用世界系还是body系的积分项
   double integral_x_used, integral_y_used;
-  if (triger_mode == 0) {
-    // trigger_mode=0时使用世界系积分项，需要转换到body系
+  if ((triger_mode == 0 || triger_mode == -2)) {
+    // trigger_mode=0/-2时使用世界系积分项，需要转换到body系
     integral_x_used = intergral_targetx * cos_yaw + intergral_targety * sin_yaw;
     integral_y_used = - intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
   } else {
@@ -1103,8 +1112,8 @@ void cmdCallback(const ros::TimerEvent &e) {
   double decay_factor = 1.0 - integral_decay * accel_dt;
   decay_factor = std::max(0.0, std::min(1.0, decay_factor));  // 防止异常
 
-  if (triger_mode == 0) {
-    // trigger_mode=0时在世界系累积x和y的积分项
+  if ((triger_mode == 0 || triger_mode == -2)) {
+    // trigger_mode=0/-2时在世界系累积x和y的积分项
     intergral_targetx = intergral_targetx * decay_factor + accel_dt * (cmd.position.x - vins_p.x());
     intergral_targety = intergral_targety * decay_factor + accel_dt * (cmd.position.y - vins_p.y());
   } else {
@@ -1117,7 +1126,7 @@ void cmdCallback(const ros::TimerEvent &e) {
   intergral_targetz = intergral_targetz * decay_factor + accel_dt * (cmd.position.z - vins_p.z());
 
   // 限制积分项
-  if (triger_mode == 0) {
+  if ((triger_mode == 0 || triger_mode == -2)) {
     intergral_targetx = std::max(std::min(intergral_targetx, integral_limit_x), -integral_limit_x);
     intergral_targety = std::max(std::min(intergral_targety, integral_limit_y), -integral_limit_y);
   } else {
@@ -1227,7 +1236,7 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     }
 
     // 处理triger_mode切换逻辑
-    if (triger_mode == 0){
+    if ((triger_mode == 0 || triger_mode == -2)){
       if (hc14_offset_pos_ready && 
           hc14_offset_yaw_ready && 
           target_receive && 
@@ -1245,8 +1254,8 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
     else if (triger_mode == 1){
       if (hc14_offset_yaw_ready && 
           hc14_offset_pos_ready &&
-          std::fabs(hc14_dog_vel.x() - vins_v.x()) < 0.2 && 
-          std::fabs(hc14_dog_vel.y() - vins_v.y()) < 0.2 && 
+          std::fabs(hc14_dog_vel.x() - vins_v.x()) < 0.3 && 
+          std::fabs(hc14_dog_vel.y() - vins_v.y()) < 0.3 && 
           std::fabs(hc14_dog_pos.x() - vins_p.x()) < 0.4 &&
           std::fabs(hc14_dog_pos.y() - vins_p.y()) < 0.4 &&
           angle_diff < 30.0/180.0 * M_PI)
@@ -1278,8 +1287,8 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
             hc14_offset_yaw_ready &&
             std::fabs(hc14_dog_vel.x() - vins_v.x()) < 0.65 && 
             std::fabs(hc14_dog_vel.y() - vins_v.y()) < 0.65 && 
-            std::fabs(hc14_dog_pos.x() - vins_p.x()) < 0.2 &&
-            std::fabs(hc14_dog_pos.y() - vins_p.y()) < 0.2 &&
+            std::fabs(hc14_dog_pos.x() - vins_p.x()) < 0.3 &&
+            std::fabs(hc14_dog_pos.y() - vins_p.y()) < 0.3 &&
             vins_p.z() > hc14_dog_pos.z() - 0.2 &&
             angle_diff < 45.0/180.0 * M_PI ))
       {
@@ -1363,7 +1372,7 @@ int main(int argc, char **argv) {
   
   // 订阅处理后的dog_pos话题
   ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos_processed", 10, dog_pos_callback);
-  
+  ros::Subscriber command_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/command_pos", 10, command_pos_callback);
 
   pos_cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd", 50);
   land_pub_ = nh.advertise<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land",1);

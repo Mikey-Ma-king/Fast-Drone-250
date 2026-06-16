@@ -21,3 +21,4 @@ void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr);
 void heartbeatCallback(const std_msgs::EmptyConstPtr &msg);
 void pid_callback(const std_msgs::Float64MultiArray::ConstPtr& msg);
 void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg);
+void command_pos_callback(const nav_msgs::Odometry::ConstPtr& msg);

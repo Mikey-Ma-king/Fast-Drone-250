@@ -18,6 +18,8 @@ extern Eigen::Vector3d hc14_dog_pos;
 extern int hc14_dog_pos_count;
 extern double hc14_dog_yaw;
 extern double hc14_dog_yaw_rate;  // 狗通信角速度
+extern double command_pos_yaw;
+extern bool command_pos_received;
 extern bool hc14_offset_yaw_ready;
 extern bool hc14_offset_pos_ready;
 
@@ -202,7 +204,7 @@ void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
         intergral_targetx_body = 0;
         intergral_targety_body = 0;
         intergral_targetz = 0;
-    }else if (new_triger_mode == 0){
+    }else if (new_triger_mode == 0 || new_triger_mode == -2){
         if (triger_mode == -1){
             last_cmd_initialized = false;
         }
@@ -221,7 +223,7 @@ void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
             last_cmd_initialized = false;
         }
         // 从世界系切换到body系（0 -> 1）时的积分项坐标转换
-        if (triger_mode == 0) {
+        if (triger_mode == 0 || triger_mode == -2) {
             double cos_yaw = cos(vins_yaw);
             double sin_yaw = sin(vins_yaw);
             // 将世界系积分项转换到body系（使用平台坐标系）
@@ -301,4 +303,9 @@ void dog_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
     last_hc14_dog_acc_time = current_time;
 
     hc14_dog_pos_count++;  // 收到包时计数器+1 
+}
+
+void command_pos_callback(const nav_msgs::Odometry::ConstPtr& msg) {
+    command_pos_yaw = msg->pose.pose.orientation.w;
+    command_pos_received = true;
 }

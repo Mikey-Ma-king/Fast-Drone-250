@@ -12,7 +12,7 @@ source ~/schurvins/devel/setup.bash
 roslaunch svo_ros euroc_vio_stereo.launch &
 
 sleep 5
-
+source devel/setup.bash
 rostopic pub -1  /takeoff_flag quadrotor_msgs/TakeoffLand "takeoff_land_cmd: 1"
 
 source devel/setup.bash

@@ -1,0 +1,115 @@
+# =============================================================================
+# 手动测试 /command_pos 与避障 — 终端操作模板
+# 用法：先 source ROS + 本工作空间，再按下面步骤开终端执行
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 0. 每个新终端先执行（路径按你的机器改）
+# -----------------------------------------------------------------------------
+source /opt/ros/noetic/setup.bash
+cd /home/pc/Fast-Drone-250
+source devel/setup.bash
+
+
+# -----------------------------------------------------------------------------
+# 1. 前置：这些进程需要先跑起来
+# -----------------------------------------------------------------------------
+# - 仿真/真机 + VINS（/vins_fusion/imu_propagate）
+# - 深度图（仿真默认 /realsense/depth_camera/depth/image_raw）
+# - MPC.py
+# - 可选：agent/node.py（跑 VLM 时会自己发 command_pos；纯手测可不启 VLM）
+
+
+# -----------------------------------------------------------------------------
+# 2. 切到 Agent 模式（MPC 跟踪 /command_pos，triger=2）
+# -----------------------------------------------------------------------------
+bash agent_triger.sh
+
+# 等价于：
+# rostopic pub -1 /mode_manager geometry_msgs/PoseStamped \
+#   "{header: {frame_id: ''}, pose: {position: {x: 0, y: 0, z: 0}, orientation: {x: 0, y: 0, z: 0, w: -2.0}}}"
+
+
+# -----------------------------------------------------------------------------
+# 3. 查看当前 VINS 位置（手填目标时参考「当前位置 → 目标」线段）
+# -----------------------------------------------------------------------------
+rostopic echo -n 1 /vins_fusion/imu_propagate/pose/pose/position
+# 示例输出：x y z 即无人机当前世界坐标 p_start
+
+
+# =============================================================================
+# 方式 A：直接 rostopic pub（只测 MPC 跟踪，不经过避障）
+# =============================================================================
+# 注意：避障在 agent/command.py 的 publish_command_pos() 里；
+#       下面命令发到 /command_pos 的内容 = MPC 收到的内容，不会 SLSQP 微调。
+
+# 单次发布：向前 2m、高度 1.5m、yaw=0 rad
+rostopic pub -1 /command_pos nav_msgs/Odometry \
+"header:
+  stamp: now
+  frame_id: 'world'
+pose:
+  pose:
+    position: {x: 0.0, y: 0.0, z: 1.5}
+    orientation: {x: 0.0, y: 0.0, z: 0.0, w: 0.0}
+twist:
+  twist:
+    linear: {x: 0.0, y: 0.0, z: 0.0}"
+
+# 每秒发一次（改目标时可改 x/y/z；orientation.w = 目标 yaw，单位弧度）
+rostopic pub -r 1 /command_pos nav_msgs/Odometry \
+"header:
+  stamp: now
+  frame_id: 'world'
+pose:
+  pose:
+    position: {x: 2.0, y: 0.0, z: 1.5}
+    orientation: {x: 0.0, y: 0.0, z: 0.0, w: 0.0}
+twist:
+  twist:
+    linear: {x: 0.0, y: 0.0, z: 0.0}"
+
+# 监听 MPC 实际收到的目标
+rostopic echo /command_pos
+
+
+# =============================================================================
+# 方式 B：带避障的手动发布（推荐测 OA_OBS_MIN_CLEARANCE_M）
+# =============================================================================
+# 需要 VINS + 深度在发布；脚本会 init 避障模块并订阅深度/VINS，
+# 走与 agent 相同的 publish_command_pos() → SLSQP 线段 clearance → 再 pub。
+
+# 在仓库根目录执行（把 wx wy wz yaw_deg 改成你要测的原目标）：
+python3 agent/manual_publish_command_pos.py --wx 2.0 --wy 0.0 --wz 1.5 --yaw-deg 0
+
+# 正前方有障碍时，可故意设一个会穿障的目标，对比修正前后：
+python3 agent/manual_publish_command_pos.py --wx 3.0 --wy 0.0 --wz 1.5 --yaw-deg 0 --print-raw
+
+# 参数说明：
+#   --wx --wy --wz     原 command_pos 世界坐标（避障前的「期望目标」）
+#   --yaw-deg          目标偏航（度）；内部会转成 orientation.w（弧度）
+#   --print-raw        打印避障微调前后的 xyz
+#   --rate 1           每秒发布一次（默认只发 1 次）
+#   --wait-depth 10    最多等多少秒深度帧（默认 10）
+
+
+# =============================================================================
+# 4. 调参（agent/config.py）
+# =============================================================================
+# ENABLE_COMMAND_POS_OBSTACLE_AVOIDANCE = True   # 关掉则方式 B 也不微调
+# OA_OBS_MIN_CLEARANCE_M = 0.35                  # 线段与障碍最小距离 (m)
+# OA_OBS_DEPTH_MAX_M = 2.0                       # 参与避障的最远深度
+
+
+# =============================================================================
+# 5. 常见问题
+# =============================================================================
+# Q: 发了 command_pos 飞机不动？
+# A: 确认 agent_triger.sh 已执行；MPC 在跑；rostopic hz /command_pos 有数据。
+#
+# Q: 方式 B 和方式 A 结果一样？
+# A: 可能前方 2m 内无障碍，或 ENABLE_COMMAND_POS_OBSTACLE_AVOIDANCE=False，
+#    或深度/VINS 未就绪（深度话题与 /vins_fusion/imu_propagate 需有数据）。
+#
+# Q: orientation 里 x y z 为什么都是 0？
+# A: 本项目约定 target_yaw 存在 orientation.w（弧度），不是四元数 xyzw 全用。

@@ -11,3 +11,4 @@ src/CMakeLists.txt
 *.json
 *.svg
 *.zip
+*.mp4
