@@ -1,0 +1,41 @@
+experiment,trajectory,method,method_label,metric,mean,std,n_valid,n_repeats
+jump_response,wavy_circle,ours,Ours (cascade),iae_pre_conv,0.6158487599998762,0.584977875316348,5,5
+jump_response,sin_accel_straight,ours,Ours (cascade),iae_pre_conv,0.8378841781706244,0.9731274597440004,5,5
+jump_response,wavy_circle,kf,Whole KF,iae_pre_conv,58.74409941429801,6.092712317421054,5,5
+jump_response,sin_accel_straight,kf,Whole KF,iae_pre_conv,38.059229022528214,6.19201616805135,5,5
+jump_response,wavy_circle,lkf,LKF incr,iae_pre_conv,94.50063671309456,5.9449220909345994,5,5
+jump_response,sin_accel_straight,lkf,LKF incr,iae_pre_conv,60.02884840296133,20.185894347181385,5,5
+jump_response,wavy_circle,vis,Vis fixed R/t,iae_pre_conv,10.93284820174652,12.964236152656033,5,5
+jump_response,sin_accel_straight,vis,Vis fixed R/t,iae_pre_conv,6.3646020770071114,1.1072820879214875,5,5
+jump_response,wavy_circle,ours,Ours (cascade),t_conv_err_s,1.44,0.6985699678629188,5,5
+jump_response,sin_accel_straight,ours,Ours (cascade),t_conv_err_s,2.269999999999997,2.517836372761337,5,5
+jump_response,wavy_circle,kf,Whole KF,t_conv_err_s,31.590000000000305,0.7300684899377567,5,5
+jump_response,sin_accel_straight,kf,Whole KF,t_conv_err_s,30.920000000000186,4.907341439109274,5,5
+jump_response,wavy_circle,lkf,LKF incr,t_conv_err_s,,,0,5
+jump_response,sin_accel_straight,lkf,LKF incr,t_conv_err_s,10.650000000000016,0.0,1,5
+jump_response,wavy_circle,vis,Vis fixed R/t,t_conv_err_s,12.287500000000009,16.39646176262837,4,5
+jump_response,sin_accel_straight,vis,Vis fixed R/t,t_conv_err_s,8.959999999999994,1.4262713626796455,5,5
+drift,wavy_circle,ours,Ours (cascade),mean_error_m,0.12690103227425367,0.0043481139495551695,5,5
+drift,sin_accel_straight,ours,Ours (cascade),mean_error_m,0.12181472186784785,0.015734591651152346,5,5
+drift,wavy_circle,kf,Whole KF,mean_error_m,0.13859661693502276,0.012307900332272923,5,5
+drift,sin_accel_straight,kf,Whole KF,mean_error_m,0.10896755488459094,0.004688452593842938,5,5
+drift,wavy_circle,lkf,LKF incr,mean_error_m,1.3596062231063881,0.08435195867182434,5,5
+drift,sin_accel_straight,lkf,LKF incr,mean_error_m,0.6196985917313981,0.06552697133195459,5,5
+drift,wavy_circle,vis,Vis fixed R/t,mean_error_m,0.5184706277640962,0.015818429171296375,5,5
+drift,sin_accel_straight,vis,Vis fixed R/t,mean_error_m,0.5565803296837086,0.019503410610100854,5,5
+drift,wavy_circle,ours,Ours (cascade),max_error_m,0.3068684295375749,0.024516952934047424,5,5
+drift,sin_accel_straight,ours,Ours (cascade),max_error_m,0.2935870184466222,0.03367587619231513,5,5
+drift,wavy_circle,kf,Whole KF,max_error_m,0.33558536315455634,0.025127426360066853,5,5
+drift,sin_accel_straight,kf,Whole KF,max_error_m,0.2837505129113726,0.050807692290008116,5,5
+drift,wavy_circle,lkf,LKF incr,max_error_m,2.5494580548019985,0.4198383430658559,5,5
+drift,sin_accel_straight,lkf,LKF incr,max_error_m,1.5803955434745502,0.2635428142902416,5,5
+drift,wavy_circle,vis,Vis fixed R/t,max_error_m,1.3133259897467098,0.05308900044693885,5,5
+drift,sin_accel_straight,vis,Vis fixed R/t,max_error_m,2.123497170612903,0.14885779521323064,5,5
+drift,wavy_circle,ours,Ours (cascade),min_error_m,0.011249277337029608,0.004897847800701834,5,5
+drift,sin_accel_straight,ours,Ours (cascade),min_error_m,0.010943796763589258,0.006769351130957499,5,5
+drift,wavy_circle,kf,Whole KF,min_error_m,0.01596282971259336,0.007554834409262777,5,5
+drift,sin_accel_straight,kf,Whole KF,min_error_m,0.00939094502419174,0.0034492885632431453,5,5
+drift,wavy_circle,lkf,LKF incr,min_error_m,0.6479388562646428,0.046462282987127616,5,5
+drift,sin_accel_straight,lkf,LKF incr,min_error_m,0.04587884283061401,0.01993831944026861,5,5
+drift,wavy_circle,vis,Vis fixed R/t,min_error_m,0.09103953656678562,0.02531148107423669,5,5
+drift,sin_accel_straight,vis,Vis fixed R/t,min_error_m,0.0426783072145906,0.021460437716730875,5,5

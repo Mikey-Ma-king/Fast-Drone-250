@@ -1,0 +1,4 @@
+<launch>
+  <!-- 仿真实验 traj_server：放宽 0→1 / 1→2，禁止自动 1→0、2→1 -->
+  <node name="traj_server_sim" pkg="planning" type="planning_sim" output="screen" />
+</launch>

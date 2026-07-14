@@ -14,7 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   
 )
 
-find_package(OpenCV 3 REQUIRED)
+find_package(OpenCV 4 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system filesystem thread)
 find_package(cv_bridge REQUIRED)
 

@@ -3,6 +3,12 @@
 #include <Eigen/Dense>
 #include <cmath>
 
+namespace {
+constexpr double kTimerDt = 0.05;
+constexpr double kOutputProcessNoise = 0.01;
+constexpr double kOutputMeasNoise = 0.1;
+}  // namespace
+
 /*
  * Dog Position Processor (LKF Base)
  * 使用 target_ekf_odom（直接）与 raw_dog_pos（与上一次的增量 + 当前最终状态）
@@ -41,21 +47,22 @@ KalmanFilter::KalmanFilter(double process_noise, double measurement_noise)
     H_ = Eigen::MatrixXd::Identity(6, 6);
 }
 
-// 预测步骤
+// 预测步骤（Q 随 dt 缩放：名义 dt=kTimerDt 时等于 kOutputProcessNoise）
 void KalmanFilter::predict(double dt) {
     if (!initialized_) return;
-    
+    if (dt <= 0.0) dt = kTimerDt;
+
     // 构建状态转移矩阵（恒定速度模型）
     Eigen::MatrixXd F = F_base_;
     F(0, 3) = dt;  // x = x + vx * dt
     F(1, 4) = dt;  // y = y + vy * dt
     F(2, 5) = dt;  // z = z + vz * dt
-    
+
     // 预测状态
     state_ = F * state_;
-    
+
     // 预测协方差
-    covariance_ = F * covariance_ * F.transpose() + Q_;
+    covariance_ = F * covariance_ * F.transpose() + Q_ * (dt / kTimerDt);
 }
 
 // 更新步骤
@@ -181,7 +188,7 @@ DogPosProcessor::DogPosProcessor()
       last_dog_vel_time_(0.0),
       acc_filter_gain_(0.3),
       dog_acc_initialized_(false),
-      kf_(0.01, 0.1),
+      kf_(kOutputProcessNoise, kOutputMeasNoise),
       kf_enabled_(true),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
@@ -212,7 +219,7 @@ DogPosProcessor::DogPosProcessor()
     simulate_mode_ = true;
     
     // 发布者 - 使用Odometry格式
-    dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);
+    dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed_lkf", 10);
     
     // Debug发布者 - 发布AOA计算得到的dog位置
     aoa_dog_pos_debug_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_aoa_debug", 10);
@@ -245,7 +252,7 @@ DogPosProcessor::DogPosProcessor()
     // 一开始显式 reset KF，保证从未初始化状态开始
     kf_.reset();
 
-    ROS_INFO("Dog Position Processor (LKF base): target_ekf_odom + raw_dog_pos(increment+state) -> one LKF -> dog_pos_processed");
+    ROS_INFO("Dog Position Processor (lkf_base): target + raw increment -> /dog_pos_processed_lkf");
 }
 
 // 角度归一化到[-π, π]
@@ -566,11 +573,13 @@ void DogPosProcessor::publishProcessedDogPos() {
     msg.pose.pose.position.y = final_dog_pos_.y();
     msg.pose.pose.position.z = final_dog_pos_.z();
 
-    // 有 target_ekf_odom 输入且已过 5s 则视为收敛，用 orientation.w/x 标记 pos_ready / yaw_ready
-    double elapsed = s_first_target_ekf_time.isZero() ? 0.0 : (ros::Time::now() - s_first_target_ekf_time).toSec();
-    bool converged = (elapsed >= 1.0);
-    msg.pose.pose.orientation.w = converged ? 1.0 : 0.0;   // pos_ready
-    msg.pose.pose.orientation.x = converged ? 1.0 : 0.0;   // yaw_ready
+    // double elapsed = s_first_target_ekf_time.isZero() ? 0.0 : (ros::Time::now() - s_first_target_ekf_time).toSec();
+    // bool converged = (elapsed >= 1.0);
+    // msg.pose.pose.orientation.w = converged ? 1.0 : 0.0;   // pos_ready
+    // msg.pose.pose.orientation.x = converged ? 1.0 : 0.0;   // yaw_ready
+
+    msg.pose.pose.orientation.w = 1.0;   // pos_ready（降落实验恒 true）
+    msg.pose.pose.orientation.x = 1.0;   // yaw_ready（降落实验恒 true）
     msg.pose.pose.orientation.y = 0.0;
     msg.pose.pose.orientation.z = 0.0;
 
@@ -606,7 +615,7 @@ void DogPosProcessor::spin() {
 }
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "dog_pos_processor");
+    ros::init(argc, argv, "dog_pos_processor_lkf");
     DogPosProcessor processor;
     processor.spin();
     return 0;

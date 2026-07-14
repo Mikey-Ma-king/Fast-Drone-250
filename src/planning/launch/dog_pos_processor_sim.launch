@@ -1,0 +1,4 @@
+<launch>
+  <!-- 仿真：Cascade KF + R/t (Ours) -> /dog_pos_processed -->
+  <node name="dog_pos_processor_sim" pkg="planning" type="dog_pos_processor_sim" output="screen" />
+</launch>

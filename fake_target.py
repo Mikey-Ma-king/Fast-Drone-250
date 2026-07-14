@@ -8,6 +8,7 @@ import time
 import random
 import os
 import threading
+from collections import deque
 
 # 从环境变量读取随机种子，如果存在则设置
 # 这样每次实验可以使用不同的随机种子，确保随机生成的颠簸区域不同
@@ -63,14 +64,869 @@ def transform_dog_pos(x, y, z, yaw, rotation_angle_deg=90.0, x_offset=5.0):
     
     return x_transformed, y_rotated, z, yaw_transformed
 
+
+def normalize_yaw(yaw):
+    while yaw > math.pi:
+        yaw -= 2 * math.pi
+    while yaw < -math.pi:
+        yaw += 2 * math.pi
+    return yaw
+
+
+def sample_random_interval(hz_min, hz_max):
+    """根据频率上下限随机采样相邻两包间隔（秒）。hz 越大间隔越短。"""
+    lo = max(1e-6, min(float(hz_min), float(hz_max)))
+    hi = max(float(hz_min), float(hz_max))
+    if abs(hi - lo) < 1e-9:
+        return 1.0 / lo
+    return random.uniform(1.0 / hi, 1.0 / lo)
+
+
+def read_extrinsic_drift_params(defaults):
+    """从节点私有命名空间读取 dog_pos / vins 外参漂移参数（wavy_circle / sin_accel_straight 每帧重读）。"""
+    out = {}
+    for key, val in defaults.items():
+        out[key] = rospy.get_param('~' + key, val)
+    return out
+
+
+EXTRINSIC_DRIFT_DEFAULTS = {
+    'dog_pos_drift_offset_x': 0.0,
+    'dog_pos_drift_offset_y': 0.0,
+    'dog_pos_drift_offset_z': 0.0,
+    'dog_pos_drift_rate_x': 0.008,
+    'dog_pos_drift_rate_y': 0.008,
+    'dog_pos_drift_rate_z': 0.0,
+    'dog_pos_drift_yaw_initial': 0.0,
+    'dog_pos_drift_yaw_rate': 0.003,
+    'vins_drift_rate_x': -0.008,
+    'vins_drift_rate_y': -0.008,
+    'vins_drift_rate_z': 0.0,
+    'vins_drift_yaw_rate': -0.003,
+}
+
+def setup_vins_zero_publisher(enabled):
+    """True 时创建 /vins_fusion/imu_propagate 发布器（供 dog_pos_processor 初始化）。"""
+    if not enabled:
+        return None
+    return rospy.Publisher('/vins_fusion/imu_propagate', Odometry, queue_size=10)
+
+
+def publish_vins_odom(vins_pub, x=0.0, y=0.0, z=0.0, yaw=0.0):
+    """向 /vins_fusion/imu_propagate 发送 Odometry（位置 + 绕 z 的 yaw，速度为零）。"""
+    if vins_pub is None:
+        return
+    yaw = normalize_yaw(yaw)
+    half = yaw * 0.5
+    msg = Odometry()
+    msg.header.stamp = rospy.Time.now()
+    msg.header.frame_id = "world"
+    msg.child_frame_id = "body"
+    msg.pose.pose.position = Point(x, y, z)
+    msg.pose.pose.orientation.w = math.cos(half)
+    msg.pose.pose.orientation.x = 0.0
+    msg.pose.pose.orientation.y = 0.0
+    msg.pose.pose.orientation.z = math.sin(half)
+    msg.twist.twist.linear = Vector3(0.0, 0.0, 0.0)
+    msg.twist.twist.angular = Vector3(0.0, 0.0, 0.0)
+    vins_pub.publish(msg)
+
+
+def publish_vins_zero_odom(vins_pub):
+    publish_vins_odom(vins_pub, 0.0, 0.0, 0.0, 0.0)
+
+
+class LocQualityMonitor:
+    """对比 /dog_pos_processed、/dog_pos 与当前 GT，定期打印定位误差与质量。"""
+
+    def __init__(self, print_hz=1.0, window_sec=5.0):
+        self.print_interval = 1.0 / max(0.1, float(print_hz))
+        self.window_sec = max(0.5, float(window_sec))
+        self.lock = threading.Lock()
+        self.gt = None  # dict: t,x,y,z,yaw,vx,vy,vz
+        self.last_print_time = time.time()
+        self._proc_sub = rospy.Subscriber(
+            '/dog_pos_processed', Odometry, self._on_processed, queue_size=50)
+        self._raw_sub = rospy.Subscriber(
+            '/dog_pos', Odometry, self._on_raw, queue_size=50)
+        self._proc_hist = deque()  # (t, pos3d, pos_xy, pos_z, yaw_deg, vel)
+        self._raw_hist = deque()
+
+    def update_gt(self, x, y, z, yaw, vx, vy, vz, t=None):
+        if t is None:
+            t = time.time()
+        with self.lock:
+            self.gt = {
+                't': t, 'x': x, 'y': y, 'z': z, 'yaw': yaw,
+                'vx': vx, 'vy': vy, 'vz': vz,
+            }
+
+    @staticmethod
+    def _yaw_err_deg(gt_yaw, est_yaw):
+        return abs(normalize_yaw(gt_yaw - est_yaw)) * 180.0 / math.pi
+
+    @staticmethod
+    def _pos_errors(gt, x, y, z):
+        dx = gt['x'] - x
+        dy = gt['y'] - y
+        dz = gt['z'] - z
+        pos_xy = math.hypot(dx, dy)
+        pos_3d = math.sqrt(dx * dx + dy * dy + dz * dz)
+        return pos_3d, pos_xy, abs(dz)
+
+    def _record_sample(self, hist, t, gt, x, y, z, yaw, vx_w, vy_w, vz_w):
+        pos_3d, pos_xy, pos_z = self._pos_errors(gt, x, y, z)
+        yaw_deg = self._yaw_err_deg(gt['yaw'], yaw)
+        vel = math.sqrt(
+            (gt['vx'] - vx_w) ** 2 + (gt['vy'] - vy_w) ** 2 + (gt['vz'] - vz_w) ** 2)
+        hist.append((t, pos_3d, pos_xy, pos_z, yaw_deg, vel))
+        cutoff = t - self.window_sec
+        while hist and hist[0][0] < cutoff:
+            hist.popleft()
+
+    def _on_processed(self, msg):
+        with self.lock:
+            gt = self.gt
+        if gt is None:
+            return
+        t = msg.header.stamp.to_sec()
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        z = msg.pose.pose.position.z
+        yaw = msg.twist.twist.angular.x
+        vx_w = msg.twist.twist.linear.x
+        vy_w = msg.twist.twist.linear.y
+        vz_w = msg.twist.twist.linear.z
+        with self.lock:
+            self._record_sample(self._proc_hist, t, gt, x, y, z, yaw, vx_w, vy_w, vz_w)
+            self._latest_proc = {
+                'pos_3d': self._pos_errors(gt, x, y, z)[0],
+                'yaw_deg': self._yaw_err_deg(gt['yaw'], yaw),
+                'pos_ready': msg.pose.pose.orientation.y > 0.5,
+                'yaw_ready': msg.pose.pose.orientation.z > 0.5,
+                'initialized': msg.pose.pose.orientation.w > 0.5,
+            }
+
+    def _on_raw(self, msg):
+        with self.lock:
+            gt = self.gt
+        if gt is None:
+            return
+        t = msg.header.stamp.to_sec()
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        z = msg.pose.pose.position.z
+        yaw = msg.pose.pose.orientation.w
+        # /dog_pos 速度在 body 系，旋到世界系再比
+        vx_b = msg.twist.twist.linear.x
+        vy_b = msg.twist.twist.linear.y
+        vz_b = msg.twist.twist.linear.z
+        c, s = math.cos(yaw), math.sin(yaw)
+        vx_w = vx_b * c - vy_b * s
+        vy_w = vx_b * s + vy_b * c
+        vz_w = vz_b
+        with self.lock:
+            self._record_sample(self._raw_hist, t, gt, x, y, z, yaw, vx_w, vy_w, vz_w)
+            self._latest_raw = {
+                'pos_3d': self._pos_errors(gt, x, y, z)[0],
+                'yaw_deg': self._yaw_err_deg(gt['yaw'], yaw),
+            }
+
+    @staticmethod
+    def _summarize(hist):
+        if not hist:
+            return None
+        pos = [e[1] for e in hist]
+        yaw = [e[4] for e in hist]
+        vel = [e[5] for e in hist]
+        n = len(pos)
+        mean_pos = sum(pos) / n
+        rmse_pos = math.sqrt(sum(p * p for p in pos) / n)
+        max_pos = max(pos)
+        mean_yaw = sum(yaw) / n
+        max_yaw = max(yaw)
+        mean_vel = sum(vel) / n
+        return {
+            'n': n, 'mean_pos': mean_pos, 'rmse_pos': rmse_pos, 'max_pos': max_pos,
+            'mean_yaw': mean_yaw, 'max_yaw': max_yaw, 'mean_vel': mean_vel,
+        }
+
+    @staticmethod
+    def _quality_label(rmse_pos_m):
+        if rmse_pos_m < 0.05:
+            return 'GOOD'
+        if rmse_pos_m < 0.12:
+            return 'OK'
+        if rmse_pos_m < 0.25:
+            return 'FAIR'
+        return 'POOR'
+
+    def maybe_print(self):
+        now = time.time()
+        if now - self.last_print_time < self.print_interval:
+            return
+        self.last_print_time = now
+        with self.lock:
+            proc_hist = list(self._proc_hist)
+            raw_hist = list(self._raw_hist)
+            latest_proc = getattr(self, '_latest_proc', None)
+            latest_raw = getattr(self, '_latest_raw', None)
+        proc_sum = self._summarize(proc_hist)
+        raw_sum = self._summarize(raw_hist)
+        if proc_sum is None and raw_sum is None:
+            rospy.loginfo("[loc_quality] waiting for /dog_pos_processed or /dog_pos ...")
+            return
+        parts = []
+        if latest_proc is not None:
+            parts.append(
+                "proc|GT now: pos={:.3f}m yaw={:.1f}deg ready(p={},y={})".format(
+                    latest_proc['pos_3d'], latest_proc['yaw_deg'],
+                    int(latest_proc['pos_ready']), int(latest_proc['yaw_ready'])))
+        if latest_raw is not None:
+            parts.append(
+                "raw|GT now: pos={:.3f}m yaw={:.1f}deg".format(
+                    latest_raw['pos_3d'], latest_raw['yaw_deg']))
+        if proc_sum is not None:
+            q = self._quality_label(proc_sum['rmse_pos'])
+            parts.append(
+                "proc {:.0f}s(n={}): pos mean={:.3f} rmse={:.3f} max={:.3f}m "
+                "yaw mean={:.1f} max={:.1f}deg vel mean={:.3f}m/s [{}]".format(
+                    self.window_sec, proc_sum['n'],
+                    proc_sum['mean_pos'], proc_sum['rmse_pos'], proc_sum['max_pos'],
+                    proc_sum['mean_yaw'], proc_sum['max_yaw'], proc_sum['mean_vel'], q))
+        if raw_sum is not None:
+            parts.append(
+                "raw {:.0f}s(n={}): pos mean={:.3f} rmse={:.3f} max={:.3f}m "
+                "yaw mean={:.1f} max={:.1f}deg".format(
+                    self.window_sec, raw_sum['n'],
+                    raw_sum['mean_pos'], raw_sum['rmse_pos'], raw_sum['max_pos'],
+                    raw_sum['mean_yaw'], raw_sum['max_yaw']))
+        rospy.loginfo("[loc_quality] " + " | ".join(parts))
+
+
+def compute_wavy_circle_state(
+        t, center_x, center_y, height,
+        radius, radius_sin_amp, radius_sin_omega, radius_sin_phase, angular_speed):
+    """
+    极坐标圆轨迹，半径带正弦波动：
+      theta(t) = angular_speed * t
+      R(t)     = radius + radius_sin_amp * sin(radius_sin_omega * t + radius_sin_phase)
+      x,y      = center + R * [cos(theta), sin(theta)]
+    返回世界系位置、速度、切向 yaw 与 yaw 角速度 omega。
+    """
+    theta = angular_speed * t
+    R = radius + radius_sin_amp * math.sin(radius_sin_omega * t + radius_sin_phase)
+    dR_dt = radius_sin_amp * radius_sin_omega * math.cos(
+        radius_sin_omega * t + radius_sin_phase)
+    cos_t = math.cos(theta)
+    sin_t = math.sin(theta)
+
+    x = center_x + R * cos_t
+    y = center_y + R * sin_t
+    z = height
+
+    vx = dR_dt * cos_t - R * sin_t * angular_speed
+    vy = dR_dt * sin_t + R * cos_t * angular_speed
+    vz = 0.0
+
+    speed_sq = vx * vx + vy * vy
+    yaw = math.atan2(vy, vx) if speed_sq > 1e-12 else normalize_yaw(theta + math.pi / 2.0)
+
+    if speed_sq > 1e-12:
+        d2R_dt2 = (-radius_sin_amp * radius_sin_omega * radius_sin_omega
+                   * math.sin(radius_sin_omega * t + radius_sin_phase))
+        ax = (d2R_dt2 * cos_t - 2.0 * dR_dt * sin_t * angular_speed
+              - R * cos_t * angular_speed * angular_speed)
+        ay = (d2R_dt2 * sin_t + 2.0 * dR_dt * cos_t * angular_speed
+              - R * sin_t * angular_speed * angular_speed)
+        omega = (vx * ay - vy * ax) / speed_sq
+    else:
+        omega = angular_speed
+
+    return x, y, z, vx, vy, vz, yaw, omega
+
+
+def publish_wavy_circle_motion():
+    """
+    测试 dog_pos_processor 用的基准轨迹：圆 + 极坐标半径正弦波动。
+    默认始终发布 target_ekf_odom / dog_pos / ground_truth，无 FOV 限制。
+    通信与 target 的发包间隔在 [hz_min, hz_max] 内随机。
+    """
+    rospy.init_node('target_wavy_circle_publisher')
+
+    pub = rospy.Publisher('/target_ekf_odom', Odometry, queue_size=10)
+    dog_pos_pub = rospy.Publisher('/dog_pos', Odometry, queue_size=10)
+    ground_truth_pub = rospy.Publisher('/ground_truth_traj', Odometry, queue_size=10)
+
+    sim_hz = 100.0
+    sim_rate = rospy.Rate(max(1.0, float(sim_hz)))
+
+    # --- 轨迹：圆 + R(t) 正弦（改这里即可）---
+    radius = 3.5
+    radius_sin_amp = 0.5
+    radius_sin_omega = 0.9
+    radius_sin_phase = 0.0
+    center_x = 0.0
+    center_y = 0.0
+    height = 0.4
+    angular_speed = 0.15
+
+    # --- target_ekf_odom：噪声 + 随机频率 ---
+    target_ekf_odom_noise_std = 0.1
+    target_ekf_odom_hz_min = 0.5
+    target_ekf_odom_hz_max = 5.0
+
+    # --- dog_pos（通信链路）：噪声 + 漂移 + 随机频率 ---
+    dog_pos_noise_std = 0.05
+    dog_pos_hz_min = 20.0
+    dog_pos_hz_max = 50.0
+    dog_pos_drift_offset_x = 0.0
+    dog_pos_drift_offset_y = 0.0
+    dog_pos_drift_offset_z = 0.0
+    dog_pos_drift_rate_x = 0.008
+    dog_pos_drift_rate_y = 0.008
+    dog_pos_drift_rate_z = 0.0
+    dog_pos_drift_yaw_initial = 0.0
+    dog_pos_drift_yaw_rate = 0.003
+
+    publish_vins_zero = rospy.get_param('~publish_vins_zero', True)
+    vins_drift_rate_x = -0.008
+    vins_drift_rate_y = -0.008
+    vins_drift_rate_z = 0.0
+    vins_drift_yaw_rate = -0.003
+    vins_zero_pub = setup_vins_zero_publisher(publish_vins_zero)
+
+    # 定位质量打印：对比 /dog_pos_processed、/dog_pos 与 GT
+    print_loc_quality = True
+    loc_quality_print_hz = 1.0
+    loc_quality_window_sec = 5.0
+
+    vel_filter_alpha = 0.95
+    vel_filter_alpha = max(0.0, min(1.0, float(vel_filter_alpha)))
+
+    drift_accum_x, drift_accum_y, drift_accum_z = 0.0, 0.0, 0.0
+    yaw_drift_accum = 0.0
+    last_dog_drift_time = None
+    vins_accum_x, vins_accum_y, vins_accum_z = 0.0, 0.0, 0.0
+    vins_yaw_accum = 0.0
+    last_vins_drift_time = None
+
+    last_odom_pos = None
+    last_odom_time = None
+    last_odom_vel = None
+    last_pos_base = None
+    last_dog_vel_world = None
+    last_dog_pos_sample_time = None
+
+    start_time = time.time()
+    next_target_publish = start_time + sample_random_interval(
+        target_ekf_odom_hz_min, target_ekf_odom_hz_max)
+    next_dog_publish = start_time + sample_random_interval(dog_pos_hz_min, dog_pos_hz_max)
+    last_sim_time = start_time
+
+    rospy.loginfo(
+        "Wavy circle: R=%.2f+%.2f*sin(%.3f*t+%.2f), omega=%.3f rad/s, center=(%.2f,%.2f), h=%.2f",
+        radius, radius_sin_amp, radius_sin_omega, radius_sin_phase,
+        angular_speed, center_x, center_y, height)
+    rospy.loginfo(
+        "  target_ekf: noise_std=%.4f, hz=[%.1f, %.1f] (random interval)",
+        target_ekf_odom_noise_std, target_ekf_odom_hz_min, target_ekf_odom_hz_max)
+    rospy.loginfo(
+        "  dog_pos: noise_std=%.4f, hz=[%.1f, %.1f], drift_rate=(%.4f,%.4f,%.4f) m/s, yaw_rate=%.4f rad/s",
+        dog_pos_noise_std, dog_pos_hz_min, dog_pos_hz_max,
+        dog_pos_drift_rate_x, dog_pos_drift_rate_y, dog_pos_drift_rate_z,
+        dog_pos_drift_yaw_rate)
+    if publish_vins_zero:
+        rospy.loginfo(
+            "  publish_vins=true @ sim_hz=%.0f, vins_drift_rate=(%.4f,%.4f,%.4f) m/s, yaw_rate=%.4f rad/s",
+            sim_hz, vins_drift_rate_x, vins_drift_rate_y, vins_drift_rate_z, vins_drift_yaw_rate)
+    if print_loc_quality:
+        rospy.loginfo(
+            "  loc_quality: print_hz=%.1f, window=%.0fs (proc/raw vs GT)",
+            loc_quality_print_hz, loc_quality_window_sec)
+    rospy.loginfo("  No FOV / gap / stop — always publishing all topics")
+
+    loc_monitor = (
+        LocQualityMonitor(loc_quality_print_hz, loc_quality_window_sec)
+        if print_loc_quality else None)
+
+    while not rospy.is_shutdown():
+        current_time = time.time()
+        dt_sim = max(0.0, current_time - last_sim_time)
+        last_sim_time = current_time
+        t = current_time - start_time
+
+        x, y, z, vx, vy, vz, yaw, omega = compute_wavy_circle_state(
+            t, center_x, center_y, height,
+            radius, radius_sin_amp, radius_sin_omega, radius_sin_phase, angular_speed)
+
+        dp = read_extrinsic_drift_params(EXTRINSIC_DRIFT_DEFAULTS)
+        dog_pos_drift_offset_x = dp['dog_pos_drift_offset_x']
+        dog_pos_drift_offset_y = dp['dog_pos_drift_offset_y']
+        dog_pos_drift_offset_z = dp['dog_pos_drift_offset_z']
+        dog_pos_drift_rate_x = dp['dog_pos_drift_rate_x']
+        dog_pos_drift_rate_y = dp['dog_pos_drift_rate_y']
+        dog_pos_drift_rate_z = dp['dog_pos_drift_rate_z']
+        dog_pos_drift_yaw_initial = dp['dog_pos_drift_yaw_initial']
+        dog_pos_drift_yaw_rate = dp['dog_pos_drift_yaw_rate']
+        vins_drift_rate_x = dp['vins_drift_rate_x']
+        vins_drift_rate_y = dp['vins_drift_rate_y']
+        vins_drift_rate_z = dp['vins_drift_rate_z']
+        vins_drift_yaw_rate = dp['vins_drift_yaw_rate']
+
+        # 通信漂移累计（平移 + yaw）
+        if last_dog_drift_time is not None and dt_sim > 0.0:
+            drift_accum_x += dog_pos_drift_rate_x * dt_sim
+            drift_accum_y += dog_pos_drift_rate_y * dt_sim
+            drift_accum_z += dog_pos_drift_rate_z * dt_sim
+            yaw_drift_accum += dog_pos_drift_yaw_rate * dt_sim
+        last_dog_drift_time = current_time
+
+        # VINS 漂移累计（初始为 0，随时间偏离）
+        if publish_vins_zero and last_vins_drift_time is not None and dt_sim > 0.0:
+            vins_accum_x += vins_drift_rate_x * dt_sim
+            vins_accum_y += vins_drift_rate_y * dt_sim
+            vins_accum_z += vins_drift_rate_z * dt_sim
+            vins_yaw_accum += vins_drift_yaw_rate * dt_sim
+        last_vins_drift_time = current_time
+
+        # --- target_ekf_odom（随机间隔）---
+        if current_time >= next_target_publish:
+            nx = random.gauss(0, target_ekf_odom_noise_std) if target_ekf_odom_noise_std > 0 else 0.0
+            ny = random.gauss(0, target_ekf_odom_noise_std) if target_ekf_odom_noise_std > 0 else 0.0
+            nz = random.gauss(0, target_ekf_odom_noise_std) if target_ekf_odom_noise_std > 0 else 0.0
+            pos_tx = x + nx
+            pos_ty = y + ny
+            pos_tz = z + nz
+
+            if last_odom_pos is not None and last_odom_time is not None:
+                dt_odom = current_time - last_odom_time
+                if dt_odom > 1e-6:
+                    vx_out = (pos_tx - last_odom_pos[0]) / dt_odom
+                    vy_out = (pos_ty - last_odom_pos[1]) / dt_odom
+                    vz_out = (pos_tz - last_odom_pos[2]) / dt_odom
+                else:
+                    vx_out, vy_out, vz_out = vx, vy, vz
+            else:
+                vx_out, vy_out, vz_out = vx, vy, vz
+
+            if vel_filter_alpha > 0 and last_odom_vel is not None:
+                vx_out = vel_filter_alpha * last_odom_vel[0] + (1.0 - vel_filter_alpha) * vx_out
+                vy_out = vel_filter_alpha * last_odom_vel[1] + (1.0 - vel_filter_alpha) * vy_out
+                vz_out = vel_filter_alpha * last_odom_vel[2] + (1.0 - vel_filter_alpha) * vz_out
+            last_odom_vel = (vx_out, vy_out, vz_out)
+            last_odom_pos = (pos_tx, pos_ty, pos_tz)
+            last_odom_time = current_time
+
+            odom = Odometry()
+            odom.header.stamp = rospy.Time.now()
+            odom.header.frame_id = "world"
+            odom.child_frame_id = "target_base"
+            odom.pose.pose.position = Point(pos_tx, pos_ty, pos_tz)
+            odom.pose.pose.orientation.w = yaw
+            odom.pose.pose.orientation.x = 0.0
+            odom.pose.pose.orientation.y = 0.0
+            odom.pose.pose.orientation.z = 0.0
+            odom.twist.twist.linear = Vector3(vx_out, vy_out, vz_out)
+            odom.twist.twist.angular = Vector3(0.0, 0.0, omega)
+            pub.publish(odom)
+            next_target_publish = current_time + sample_random_interval(
+                target_ekf_odom_hz_min, target_ekf_odom_hz_max)
+
+        # --- dog_pos（随机间隔，噪声 + 漂移）---
+        if current_time >= next_dog_publish:
+            prev_dog_sample = last_dog_pos_sample_time
+            last_dog_pos_sample_time = current_time
+
+            dx = random.gauss(0, dog_pos_noise_std) if dog_pos_noise_std > 0 else 0.0
+            dy = random.gauss(0, dog_pos_noise_std) if dog_pos_noise_std > 0 else 0.0
+            dz = random.gauss(0, dog_pos_noise_std) if dog_pos_noise_std > 0 else 0.0
+            pos_base_wx = x + dx
+            pos_base_wy = y + dy
+            pos_base_wz = z + dz
+
+            if last_pos_base is not None and prev_dog_sample is not None:
+                dt_vel = current_time - prev_dog_sample
+                if dt_vel > 1e-6:
+                    vw_x = (pos_base_wx - last_pos_base[0]) / dt_vel
+                    vw_y = (pos_base_wy - last_pos_base[1]) / dt_vel
+                    vw_z = (pos_base_wz - last_pos_base[2]) / dt_vel
+                else:
+                    vw_x, vw_y, vw_z = vx, vy, vz
+            else:
+                vw_x, vw_y, vw_z = vx, vy, vz
+            last_pos_base = (pos_base_wx, pos_base_wy, pos_base_wz)
+
+            if vel_filter_alpha > 0 and last_dog_vel_world is not None:
+                vw_x = vel_filter_alpha * last_dog_vel_world[0] + (1.0 - vel_filter_alpha) * vw_x
+                vw_y = vel_filter_alpha * last_dog_vel_world[1] + (1.0 - vel_filter_alpha) * vw_y
+                vw_z = vel_filter_alpha * last_dog_vel_world[2] + (1.0 - vel_filter_alpha) * vw_z
+            last_dog_vel_world = (vw_x, vw_y, vw_z)
+
+            cos_yaw_true = math.cos(yaw)
+            sin_yaw_true = math.sin(yaw)
+            vx_body = vw_x * cos_yaw_true + vw_y * sin_yaw_true
+            vy_body = -vw_x * sin_yaw_true + vw_y * cos_yaw_true
+            vz_body = vw_z
+
+            yaw_drift_total = dog_pos_drift_yaw_initial + yaw_drift_accum
+            offset_x = dog_pos_drift_offset_x + drift_accum_x
+            offset_y = dog_pos_drift_offset_y + drift_accum_y
+            offset_z = dog_pos_drift_offset_z + drift_accum_z
+            c, s = math.cos(yaw_drift_total), math.sin(yaw_drift_total)
+            pos_final_wx = pos_base_wx * c - pos_base_wy * s + offset_x
+            pos_final_wy = pos_base_wx * s + pos_base_wy * c + offset_y
+            pos_final_wz = pos_base_wz + offset_z
+            vx_dog = vx_body + dog_pos_drift_rate_x
+            vy_dog = vy_body + dog_pos_drift_rate_y
+            vz_dog = vz_body + dog_pos_drift_rate_z
+            yaw_out = normalize_yaw(yaw + yaw_drift_total)
+
+            dog_pos_msg = Odometry()
+            dog_pos_msg.header.stamp = rospy.Time.now()
+            dog_pos_msg.header.frame_id = "world"
+            dog_pos_msg.pose.pose.position = Point(pos_final_wx, pos_final_wy, pos_final_wz)
+            dog_pos_msg.pose.pose.orientation.w = yaw_out
+            dog_pos_msg.pose.pose.orientation.x = 0.0
+            dog_pos_msg.pose.pose.orientation.y = 0.0
+            dog_pos_msg.pose.pose.orientation.z = 0.0
+            dog_pos_msg.twist.twist.linear = Vector3(vx_dog, vy_dog, vz_dog)
+            dog_pos_msg.twist.twist.angular = Vector3(0.0, 0.0, omega)
+            dog_pos_pub.publish(dog_pos_msg)
+            next_dog_publish = current_time + sample_random_interval(dog_pos_hz_min, dog_pos_hz_max)
+
+        # --- ground_truth（每仿真步，无噪声）---
+        ground_truth_msg = Odometry()
+        ground_truth_msg.header.stamp = rospy.Time.now()
+        ground_truth_msg.header.frame_id = "world"
+        ground_truth_msg.pose.pose.position = Point(x, y, z)
+        ground_truth_msg.pose.pose.orientation.w = yaw
+        ground_truth_msg.pose.pose.orientation.x = 0.0
+        ground_truth_msg.pose.pose.orientation.y = 0.0
+        ground_truth_msg.pose.pose.orientation.z = 0.0
+        ground_truth_msg.twist.twist.linear = Vector3(vx, vy, vz)
+        ground_truth_msg.twist.twist.angular = Vector3(0.0, 0.0, omega)
+        ground_truth_pub.publish(ground_truth_msg)
+
+        publish_vins_odom(vins_zero_pub, vins_accum_x, vins_accum_y, vins_accum_z, vins_yaw_accum)
+
+        if loc_monitor is not None:
+            loc_monitor.update_gt(x, y, z, yaw, vx, vy, vz, current_time)
+            loc_monitor.maybe_print()
+
+        sim_rate.sleep()
+
+
+def compute_sin_accel_straight_state(
+        t, start_x, start_y, height, direction,
+        v_mean, v_amp, speed_sin_omega, speed_sin_phase):
+    """
+    直线轨迹，沿 direction 方向，速度规律变化：
+      v(t) = v_mean + v_amp * sin(omega * t + phase)
+      s(t) = v_mean * t - (v_amp / omega) * (cos(omega * t + phase) - cos(phase))
+    返回世界系位置、速度、yaw（沿运动方向）与角速度 omega（直线为 0）。
+    """
+    phase = speed_sin_omega * t + speed_sin_phase
+    v = v_mean + v_amp * math.sin(phase)
+    if abs(speed_sin_omega) > 1e-9:
+        s = (v_mean * t
+             - (v_amp / speed_sin_omega)
+             * (math.cos(phase) - math.cos(speed_sin_phase)))
+    else:
+        s = v_mean * t
+
+    cos_dir = math.cos(direction)
+    sin_dir = math.sin(direction)
+
+    x = start_x + s * cos_dir
+    y = start_y + s * sin_dir
+    z = height
+    vx = v * cos_dir
+    vy = v * sin_dir
+    vz = 0.0
+    yaw = normalize_yaw(direction)
+    omega = 0.0
+    return x, y, z, vx, vy, vz, yaw, omega
+
+
+def publish_sin_accel_straight_motion():
+    """
+    直线 + sin 规律加减速，用于 dog_pos_processor 对比测试。
+    与 publish_wavy_circle_motion 相同的噪声/漂移/VINS/GT 发布逻辑。
+    """
+    rospy.init_node('target_sin_accel_straight_publisher')
+
+    pub = rospy.Publisher('/target_ekf_odom', Odometry, queue_size=10)
+    dog_pos_pub = rospy.Publisher('/dog_pos', Odometry, queue_size=10)
+    ground_truth_pub = rospy.Publisher('/ground_truth_traj', Odometry, queue_size=10)
+
+    sim_hz = 100.0
+    sim_rate = rospy.Rate(max(1.0, float(sim_hz)))
+
+    # --- 轨迹：直线 + v(t)=v_mean+v_amp*sin(omega*t+phase) ---
+    # 沿 +y 轴运动，与 Exp A 跳变方向（yaw=90° + offset_x）正交
+    start_x = 0.0
+    start_y = -6.0
+    height = 0.4
+    direction = math.pi / 2.0   # rad，π/2 表示沿 +y
+    v_mean = 0.8             # 平均线速度 (m/s)
+    v_amp = 0.45             # 速度正弦振幅 (m/s)，实际速度 ∈ [v_mean-v_amp, v_mean+v_amp]
+    speed_sin_omega = 0.35   # 加减速周期角频率 (rad/s)
+    speed_sin_phase = 0.0
+
+    # --- target_ekf_odom：噪声 + 随机频率 ---
+    target_ekf_odom_noise_std = 0.1
+    target_ekf_odom_hz_min = 0.5
+    target_ekf_odom_hz_max = 5.0
+
+    # --- dog_pos（通信链路）：噪声 + 漂移 + 随机频率 ---
+    dog_pos_noise_std = 0.05
+    dog_pos_hz_min = 20.0
+    dog_pos_hz_max = 50.0
+    dog_pos_drift_offset_x = 0.0
+    dog_pos_drift_offset_y = 0.0
+    dog_pos_drift_offset_z = 0.0
+    dog_pos_drift_rate_x = 0.008
+    dog_pos_drift_rate_y = 0.008
+    dog_pos_drift_rate_z = 0.0
+    dog_pos_drift_yaw_initial = 0.0
+    dog_pos_drift_yaw_rate = 0.003
+
+    publish_vins_zero = rospy.get_param('~publish_vins_zero', True)
+    vins_drift_rate_x = -0.008
+    vins_drift_rate_y = -0.008
+    vins_drift_rate_z = 0.0
+    vins_drift_yaw_rate = -0.003
+    vins_zero_pub = setup_vins_zero_publisher(publish_vins_zero)
+
+    print_loc_quality = True
+    loc_quality_print_hz = 1.0
+    loc_quality_window_sec = 5.0
+
+    vel_filter_alpha = 0.95
+    vel_filter_alpha = max(0.0, min(1.0, float(vel_filter_alpha)))
+
+    drift_accum_x, drift_accum_y, drift_accum_z = 0.0, 0.0, 0.0
+    yaw_drift_accum = 0.0
+    last_dog_drift_time = None
+    vins_accum_x, vins_accum_y, vins_accum_z = 0.0, 0.0, 0.0
+    vins_yaw_accum = 0.0
+    last_vins_drift_time = None
+
+    last_odom_pos = None
+    last_odom_time = None
+    last_odom_vel = None
+    last_pos_base = None
+    last_dog_vel_world = None
+    last_dog_pos_sample_time = None
+
+    start_time = time.time()
+    next_target_publish = start_time + sample_random_interval(
+        target_ekf_odom_hz_min, target_ekf_odom_hz_max)
+    next_dog_publish = start_time + sample_random_interval(dog_pos_hz_min, dog_pos_hz_max)
+    last_sim_time = start_time
+
+    v_min = v_mean - v_amp
+    v_max = v_mean + v_amp
+    speed_period = (2.0 * math.pi / speed_sin_omega) if abs(speed_sin_omega) > 1e-9 else float('inf')
+    rospy.loginfo(
+        "Sin-accel straight: start=(%.2f,%.2f), dir=%.2f rad, h=%.2f",
+        start_x, start_y, direction, height)
+    rospy.loginfo(
+        "  v(t)=%.2f+%.2f*sin(%.3f*t+%.2f), v in [%.2f, %.2f] m/s, period=%.2f s",
+        v_mean, v_amp, speed_sin_omega, speed_sin_phase, v_min, v_max, speed_period)
+    rospy.loginfo(
+        "  target_ekf: noise_std=%.4f, hz=[%.1f, %.1f] (random interval)",
+        target_ekf_odom_noise_std, target_ekf_odom_hz_min, target_ekf_odom_hz_max)
+    rospy.loginfo(
+        "  dog_pos: noise_std=%.4f, hz=[%.1f, %.1f], drift_rate=(%.4f,%.4f,%.4f) m/s, yaw_rate=%.4f rad/s",
+        dog_pos_noise_std, dog_pos_hz_min, dog_pos_hz_max,
+        dog_pos_drift_rate_x, dog_pos_drift_rate_y, dog_pos_drift_rate_z,
+        dog_pos_drift_yaw_rate)
+    if publish_vins_zero:
+        rospy.loginfo(
+            "  publish_vins=true @ sim_hz=%.0f, vins_drift_rate=(%.4f,%.4f,%.4f) m/s, yaw_rate=%.4f rad/s",
+            sim_hz, vins_drift_rate_x, vins_drift_rate_y, vins_drift_rate_z, vins_drift_yaw_rate)
+    if print_loc_quality:
+        rospy.loginfo(
+            "  loc_quality: print_hz=%.1f, window=%.0fs (proc/raw vs GT)",
+            loc_quality_print_hz, loc_quality_window_sec)
+    rospy.loginfo("  No FOV / gap / stop — always publishing all topics")
+
+    loc_monitor = (
+        LocQualityMonitor(loc_quality_print_hz, loc_quality_window_sec)
+        if print_loc_quality else None)
+
+    while not rospy.is_shutdown():
+        current_time = time.time()
+        dt_sim = max(0.0, current_time - last_sim_time)
+        last_sim_time = current_time
+        t = current_time - start_time
+
+        x, y, z, vx, vy, vz, yaw, omega = compute_sin_accel_straight_state(
+            t, start_x, start_y, height, direction,
+            v_mean, v_amp, speed_sin_omega, speed_sin_phase)
+
+        dp = read_extrinsic_drift_params(EXTRINSIC_DRIFT_DEFAULTS)
+        dog_pos_drift_offset_x = dp['dog_pos_drift_offset_x']
+        dog_pos_drift_offset_y = dp['dog_pos_drift_offset_y']
+        dog_pos_drift_offset_z = dp['dog_pos_drift_offset_z']
+        dog_pos_drift_rate_x = dp['dog_pos_drift_rate_x']
+        dog_pos_drift_rate_y = dp['dog_pos_drift_rate_y']
+        dog_pos_drift_rate_z = dp['dog_pos_drift_rate_z']
+        dog_pos_drift_yaw_initial = dp['dog_pos_drift_yaw_initial']
+        dog_pos_drift_yaw_rate = dp['dog_pos_drift_yaw_rate']
+        vins_drift_rate_x = dp['vins_drift_rate_x']
+        vins_drift_rate_y = dp['vins_drift_rate_y']
+        vins_drift_rate_z = dp['vins_drift_rate_z']
+        vins_drift_yaw_rate = dp['vins_drift_yaw_rate']
+
+        if last_dog_drift_time is not None and dt_sim > 0.0:
+            drift_accum_x += dog_pos_drift_rate_x * dt_sim
+            drift_accum_y += dog_pos_drift_rate_y * dt_sim
+            drift_accum_z += dog_pos_drift_rate_z * dt_sim
+            yaw_drift_accum += dog_pos_drift_yaw_rate * dt_sim
+        last_dog_drift_time = current_time
+
+        if publish_vins_zero and last_vins_drift_time is not None and dt_sim > 0.0:
+            vins_accum_x += vins_drift_rate_x * dt_sim
+            vins_accum_y += vins_drift_rate_y * dt_sim
+            vins_accum_z += vins_drift_rate_z * dt_sim
+            vins_yaw_accum += vins_drift_yaw_rate * dt_sim
+        last_vins_drift_time = current_time
+
+        if current_time >= next_target_publish:
+            nx = random.gauss(0, target_ekf_odom_noise_std) if target_ekf_odom_noise_std > 0 else 0.0
+            ny = random.gauss(0, target_ekf_odom_noise_std) if target_ekf_odom_noise_std > 0 else 0.0
+            nz = random.gauss(0, target_ekf_odom_noise_std) if target_ekf_odom_noise_std > 0 else 0.0
+            pos_tx = x + nx
+            pos_ty = y + ny
+            pos_tz = z + nz
+
+            if last_odom_pos is not None and last_odom_time is not None:
+                dt_odom = current_time - last_odom_time
+                if dt_odom > 1e-6:
+                    vx_out = (pos_tx - last_odom_pos[0]) / dt_odom
+                    vy_out = (pos_ty - last_odom_pos[1]) / dt_odom
+                    vz_out = (pos_tz - last_odom_pos[2]) / dt_odom
+                else:
+                    vx_out, vy_out, vz_out = vx, vy, vz
+            else:
+                vx_out, vy_out, vz_out = vx, vy, vz
+
+            if vel_filter_alpha > 0 and last_odom_vel is not None:
+                vx_out = vel_filter_alpha * last_odom_vel[0] + (1.0 - vel_filter_alpha) * vx_out
+                vy_out = vel_filter_alpha * last_odom_vel[1] + (1.0 - vel_filter_alpha) * vy_out
+                vz_out = vel_filter_alpha * last_odom_vel[2] + (1.0 - vel_filter_alpha) * vz_out
+            last_odom_vel = (vx_out, vy_out, vz_out)
+            last_odom_pos = (pos_tx, pos_ty, pos_tz)
+            last_odom_time = current_time
+
+            odom = Odometry()
+            odom.header.stamp = rospy.Time.now()
+            odom.header.frame_id = "world"
+            odom.child_frame_id = "target_base"
+            odom.pose.pose.position = Point(pos_tx, pos_ty, pos_tz)
+            odom.pose.pose.orientation.w = yaw
+            odom.pose.pose.orientation.x = 0.0
+            odom.pose.pose.orientation.y = 0.0
+            odom.pose.pose.orientation.z = 0.0
+            odom.twist.twist.linear = Vector3(vx_out, vy_out, vz_out)
+            odom.twist.twist.angular = Vector3(0.0, 0.0, omega)
+            pub.publish(odom)
+            next_target_publish = current_time + sample_random_interval(
+                target_ekf_odom_hz_min, target_ekf_odom_hz_max)
+
+        if current_time >= next_dog_publish:
+            prev_dog_sample = last_dog_pos_sample_time
+            last_dog_pos_sample_time = current_time
+
+            dx = random.gauss(0, dog_pos_noise_std) if dog_pos_noise_std > 0 else 0.0
+            dy = random.gauss(0, dog_pos_noise_std) if dog_pos_noise_std > 0 else 0.0
+            dz = random.gauss(0, dog_pos_noise_std) if dog_pos_noise_std > 0 else 0.0
+            pos_base_wx = x + dx
+            pos_base_wy = y + dy
+            pos_base_wz = z + dz
+
+            if last_pos_base is not None and prev_dog_sample is not None:
+                dt_vel = current_time - prev_dog_sample
+                if dt_vel > 1e-6:
+                    vw_x = (pos_base_wx - last_pos_base[0]) / dt_vel
+                    vw_y = (pos_base_wy - last_pos_base[1]) / dt_vel
+                    vw_z = (pos_base_wz - last_pos_base[2]) / dt_vel
+                else:
+                    vw_x, vw_y, vw_z = vx, vy, vz
+            else:
+                vw_x, vw_y, vw_z = vx, vy, vz
+            last_pos_base = (pos_base_wx, pos_base_wy, pos_base_wz)
+
+            if vel_filter_alpha > 0 and last_dog_vel_world is not None:
+                vw_x = vel_filter_alpha * last_dog_vel_world[0] + (1.0 - vel_filter_alpha) * vw_x
+                vw_y = vel_filter_alpha * last_dog_vel_world[1] + (1.0 - vel_filter_alpha) * vw_y
+                vw_z = vel_filter_alpha * last_dog_vel_world[2] + (1.0 - vel_filter_alpha) * vw_z
+            last_dog_vel_world = (vw_x, vw_y, vw_z)
+
+            cos_yaw_true = math.cos(yaw)
+            sin_yaw_true = math.sin(yaw)
+            vx_body = vw_x * cos_yaw_true + vw_y * sin_yaw_true
+            vy_body = -vw_x * sin_yaw_true + vw_y * cos_yaw_true
+            vz_body = vw_z
+
+            yaw_drift_total = dog_pos_drift_yaw_initial + yaw_drift_accum
+            offset_x = dog_pos_drift_offset_x + drift_accum_x
+            offset_y = dog_pos_drift_offset_y + drift_accum_y
+            offset_z = dog_pos_drift_offset_z + drift_accum_z
+            c, s = math.cos(yaw_drift_total), math.sin(yaw_drift_total)
+            pos_final_wx = pos_base_wx * c - pos_base_wy * s + offset_x
+            pos_final_wy = pos_base_wx * s + pos_base_wy * c + offset_y
+            pos_final_wz = pos_base_wz + offset_z
+            vx_dog = vx_body + dog_pos_drift_rate_x
+            vy_dog = vy_body + dog_pos_drift_rate_y
+            vz_dog = vz_body + dog_pos_drift_rate_z
+            yaw_out = normalize_yaw(yaw + yaw_drift_total)
+
+            dog_pos_msg = Odometry()
+            dog_pos_msg.header.stamp = rospy.Time.now()
+            dog_pos_msg.header.frame_id = "world"
+            dog_pos_msg.pose.pose.position = Point(pos_final_wx, pos_final_wy, pos_final_wz)
+            dog_pos_msg.pose.pose.orientation.w = yaw_out
+            dog_pos_msg.pose.pose.orientation.x = 0.0
+            dog_pos_msg.pose.pose.orientation.y = 0.0
+            dog_pos_msg.pose.pose.orientation.z = 0.0
+            dog_pos_msg.twist.twist.linear = Vector3(vx_dog, vy_dog, vz_dog)
+            dog_pos_msg.twist.twist.angular = Vector3(0.0, 0.0, omega)
+            dog_pos_pub.publish(dog_pos_msg)
+            next_dog_publish = current_time + sample_random_interval(dog_pos_hz_min, dog_pos_hz_max)
+
+        ground_truth_msg = Odometry()
+        ground_truth_msg.header.stamp = rospy.Time.now()
+        ground_truth_msg.header.frame_id = "world"
+        ground_truth_msg.pose.pose.position = Point(x, y, z)
+        ground_truth_msg.pose.pose.orientation.w = yaw
+        ground_truth_msg.pose.pose.orientation.x = 0.0
+        ground_truth_msg.pose.pose.orientation.y = 0.0
+        ground_truth_msg.pose.pose.orientation.z = 0.0
+        ground_truth_msg.twist.twist.linear = Vector3(vx, vy, vz)
+        ground_truth_msg.twist.twist.angular = Vector3(0.0, 0.0, omega)
+        ground_truth_pub.publish(ground_truth_msg)
+
+        publish_vins_odom(vins_zero_pub, vins_accum_x, vins_accum_y, vins_accum_z, vins_yaw_accum)
+
+        if loc_monitor is not None:
+            loc_monitor.update_gt(x, y, z, yaw, vx, vy, vz, current_time)
+            loc_monitor.maybe_print()
+
+        sim_rate.sleep()
+
+
 def publish_circle_motion():
     rospy.init_node('target_circle_publisher')
     pub = rospy.Publisher('/target_ekf_odom', Odometry, queue_size=10)
     dog_pos_pub = rospy.Publisher('/dog_pos', Odometry, queue_size=10)
     ground_truth_pub = rospy.Publisher('/ground_truth_traj', Odometry, queue_size=10)
     # 若打开则每帧向 /vins_fusion/imu_propagate 发送 (0,0,0)
-    publish_vins_zero = rospy.get_param('~publish_vins_zero', False)
-    vins_zero_pub = rospy.Publisher('/vins_fusion/imu_propagate', Odometry, queue_size=10) if publish_vins_zero else None
+    publish_vins_zero = rospy.get_param('~publish_vins_zero', True)
+    vins_zero_pub = setup_vins_zero_publisher(publish_vins_zero)
     # 发布频率（Hz），可调参数
     target_ekf_odom_hz = rospy.get_param('~target_ekf_odom_hz', 15.0)
     dog_pos_hz = rospy.get_param('~dog_pos_hz', 50.0)
@@ -336,19 +1192,7 @@ def publish_circle_motion():
         ground_truth_pub.publish(ground_truth_msg)
 
         # 若打开：每帧向 /vins_fusion/imu_propagate 发送 (0,0,0)
-        if vins_zero_pub is not None:
-            vins_msg = Odometry()
-            vins_msg.header.stamp = rospy.Time.now()
-            vins_msg.header.frame_id = "world"
-            vins_msg.child_frame_id = "body"
-            vins_msg.pose.pose.position = Point(0.0, 0.0, 0.0)
-            vins_msg.pose.pose.orientation.w = 1.0
-            vins_msg.pose.pose.orientation.x = 0.0
-            vins_msg.pose.pose.orientation.y = 0.0
-            vins_msg.pose.pose.orientation.z = 0.0
-            vins_msg.twist.twist.linear = Vector3(0.0, 0.0, 0.0)
-            vins_msg.twist.twist.angular = Vector3(0.0, 0.0, 0.0)
-            vins_zero_pub.publish(vins_msg)
+        publish_vins_zero_odom(vins_zero_pub)
 
         dog_pos_rate.sleep()
 
@@ -463,7 +1307,7 @@ def publish_straight_line_motion():
     dog_pos_pub = rospy.Publisher('/dog_pos', Odometry, queue_size=10)
     ground_truth_pub = rospy.Publisher('/ground_truth_traj', Odometry, queue_size=10)
     publish_vins_zero = rospy.get_param('~publish_vins_zero', True)
-    vins_zero_pub = rospy.Publisher('/vins_fusion/imu_propagate', Odometry, queue_size=10) if publish_vins_zero else None
+    vins_zero_pub = setup_vins_zero_publisher(publish_vins_zero)
     target_ekf_odom_hz = rospy.get_param('~target_ekf_odom_hz', 15.0)
     dog_pos_hz = rospy.get_param('~dog_pos_hz', 50.0)
     dog_pos_rate = rospy.Rate(dog_pos_hz)
@@ -672,19 +1516,7 @@ def publish_straight_line_motion():
         ground_truth_msg.twist.twist.angular = Vector3(0.0, 0.0, omega)
         ground_truth_pub.publish(ground_truth_msg)
 
-        if vins_zero_pub is not None:
-            vins_msg = Odometry()
-            vins_msg.header.stamp = rospy.Time.now()
-            vins_msg.header.frame_id = "world"
-            vins_msg.child_frame_id = "body"
-            vins_msg.pose.pose.position = Point(0.0, 0.0, 0.0)
-            vins_msg.pose.pose.orientation.w = 1.0
-            vins_msg.pose.pose.orientation.x = 0.0
-            vins_msg.pose.pose.orientation.y = 0.0
-            vins_msg.pose.pose.orientation.z = 0.0
-            vins_msg.twist.twist.linear = Vector3(0.0, 0.0, 0.0)
-            vins_msg.twist.twist.angular = Vector3(0.0, 0.0, 0.0)
-            vins_zero_pub.publish(vins_msg)
+        publish_vins_zero_odom(vins_zero_pub)
 
         dog_pos_rate.sleep()
 
@@ -1832,11 +2664,17 @@ def publish_triangle_motion_with_aruco_trigger():
         dog_pos_rate.sleep()
 
 if __name__ == '__main__':
-    # 通过参数选择运动模式：'circle'、'oscillating'、'straight_line'、'sin_curve'、'triangle_sensor' 或 'triangle_aruco_trigger'
-    mode = 'circle'
+    # 模式：wavy_circle（默认，测 dog_pos_processor）、sin_accel_straight、circle、oscillating、straight_line、
+    #       sin_curve、triangle_sensor、triangle_aruco_trigger
+    # 可通过环境变量 FAKE_TARGET_MODE 或 rosrun 私有参数 ~mode 选择
+    mode = os.environ.get('FAKE_TARGET_MODE', 'wavy_circle')
 
     try:
-        if mode == 'oscillating':
+        if mode == 'wavy_circle':
+            publish_wavy_circle_motion()
+        elif mode == 'sin_accel_straight':
+            publish_sin_accel_straight_motion()
+        elif mode == 'oscillating':
             publish_oscillating_motion()
         elif mode == 'straight_line':
             publish_straight_line_motion()

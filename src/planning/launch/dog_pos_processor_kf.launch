@@ -1,0 +1,4 @@
+<launch>
+  <!-- 2. Whole joint EKF + R/t -> /dog_pos_processed_kf -->
+  <node name="dog_pos_processor_kf" pkg="planning" type="dog_pos_processor_kf" output="screen" />
+</launch>

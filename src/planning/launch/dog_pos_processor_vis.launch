@@ -1,0 +1,4 @@
+<launch>
+  <!-- 4. Vision-only, fixed R/t -> /dog_pos_processed_vis -->
+  <node name="dog_pos_processor_vis" pkg="planning" type="dog_pos_processor_vis" output="screen" />
+</launch>

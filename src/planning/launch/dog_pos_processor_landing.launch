@@ -1,0 +1,26 @@
+<launch>
+  <!-- 降落实验：单方案输出 remap 到 /dog_pos_processed 供 traj_server 使用 -->
+  <arg name="method" default="ours" />
+
+  <group if="$(eval arg('method') == 'ours')">
+    <include file="$(find planning)/launch/dog_pos_processor_sim.launch" />
+  </group>
+
+  <group if="$(eval arg('method') == 'kf')">
+    <node name="dog_pos_processor_kf" pkg="planning" type="dog_pos_processor_kf" output="screen">
+      <remap from="/dog_pos_processed_kf" to="/dog_pos_processed" />
+    </node>
+  </group>
+
+  <group if="$(eval arg('method') == 'lkf')">
+    <node name="dog_pos_processor_lkf" pkg="planning" type="dog_pos_processor_lkf" output="screen">
+      <remap from="/dog_pos_processed_lkf" to="/dog_pos_processed" />
+    </node>
+  </group>
+
+  <group if="$(eval arg('method') == 'vis')">
+    <node name="dog_pos_processor_vis" pkg="planning" type="dog_pos_processor_vis" output="screen">
+      <remap from="/dog_pos_processed_vis" to="/dog_pos_processed" />
+    </node>
+  </group>
+</launch>

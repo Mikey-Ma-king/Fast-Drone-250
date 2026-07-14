@@ -1,0 +1,137 @@
+[INFO] [1783412007.811559]: ======== Exp A: Jump response (drift rate=0) (×5 repeats) ========
+[INFO] [1783412007.817598]: --- jump_response / wavy_circle  repeat 1/5 ---
+[INFO] [1783412075.253063]:   [jump_response/wavy_circle] Ours (cascade): IAE=0.26 m·s, t_conv=1.00 s
+[INFO] [1783412075.257583]:   [jump_response/wavy_circle] Whole KF: IAE=64.22 m·s, t_conv=31.65 s
+[INFO] [1783412075.261222]:   [jump_response/wavy_circle] LKF incr: IAE=91.23 m·s, t_conv=nan s
+[INFO] [1783412075.269040]:   [jump_response/wavy_circle] Vis fixed R/t: IAE=1.06 m·s, t_conv=2.60 s
+[INFO] [1783412075.273549]: --- jump_response / wavy_circle  repeat 2/5 ---
+[INFO] [1783412142.690623]:   [jump_response/wavy_circle] Ours (cascade): IAE=0.13 m·s, t_conv=1.00 s
+[INFO] [1783412142.697634]:   [jump_response/wavy_circle] Whole KF: IAE=55.71 m·s, t_conv=30.55 s
+[INFO] [1783412142.702147]:   [jump_response/wavy_circle] LKF incr: IAE=89.40 m·s, t_conv=nan s
+[INFO] [1783412142.705645]:   [jump_response/wavy_circle] Vis fixed R/t: IAE=17.68 m·s, t_conv=36.75 s
+[INFO] [1783412142.722227]: --- jump_response / wavy_circle  repeat 3/5 ---
+[INFO] [1783412210.127939]:   [jump_response/wavy_circle] Ours (cascade): IAE=1.59 m·s, t_conv=2.60 s
+[INFO] [1783412210.132030]:   [jump_response/wavy_circle] Whole KF: IAE=50.44 m·s, t_conv=31.85 s
+[INFO] [1783412210.137000]:   [jump_response/wavy_circle] LKF incr: IAE=92.28 m·s, t_conv=nan s
+[INFO] [1783412210.140982]:   [jump_response/wavy_circle] Vis fixed R/t: IAE=3.56 m·s, t_conv=6.50 s
+[INFO] [1783412210.144845]: --- jump_response / wavy_circle  repeat 4/5 ---
+[INFO] [1783412277.769862]:   [jump_response/wavy_circle] Ours (cascade): IAE=0.38 m·s, t_conv=1.60 s
+[INFO] [1783412277.774765]:   [jump_response/wavy_circle] Whole KF: IAE=65.07 m·s, t_conv=32.55 s
+[INFO] [1783412277.778202]:   [jump_response/wavy_circle] LKF incr: IAE=104.47 m·s, t_conv=nan s
+[INFO] [1783412277.781093]:   [jump_response/wavy_circle] Vis fixed R/t: IAE=30.67 m·s, t_conv=nan s
+[INFO] [1783412277.786260]: --- jump_response / wavy_circle  repeat 5/5 ---
+[INFO] [1783412345.087610]:   [jump_response/wavy_circle] Ours (cascade): IAE=0.71 m·s, t_conv=1.00 s
+[INFO] [1783412345.091606]:   [jump_response/wavy_circle] Whole KF: IAE=58.27 m·s, t_conv=31.35 s
+[INFO] [1783412345.094959]:   [jump_response/wavy_circle] LKF incr: IAE=95.12 m·s, t_conv=nan s
+[INFO] [1783412345.099096]:   [jump_response/wavy_circle] Vis fixed R/t: IAE=1.70 m·s, t_conv=3.30 s
+[INFO] [1783412345.243238]: --- jump_response / sin_accel_straight  repeat 1/5 ---
+[INFO] [1783412412.441658]:   [jump_response/sin_accel_straight] Ours (cascade): IAE=1.64 m·s, t_conv=1.60 s
+[INFO] [1783412412.445182]:   [jump_response/sin_accel_straight] Whole KF: IAE=47.86 m·s, t_conv=37.05 s
+[INFO] [1783412412.447861]:   [jump_response/sin_accel_straight] LKF incr: IAE=75.34 m·s, t_conv=nan s
+[INFO] [1783412412.450691]:   [jump_response/sin_accel_straight] Vis fixed R/t: IAE=5.57 m·s, t_conv=8.50 s
+[INFO] [1783412412.455245]: --- jump_response / sin_accel_straight  repeat 2/5 ---
+[INFO] [1783412479.793208]:   [jump_response/sin_accel_straight] Ours (cascade): IAE=2.13 m·s, t_conv=6.75 s
+[INFO] [1783412479.797558]:   [jump_response/sin_accel_straight] Whole KF: IAE=32.52 m·s, t_conv=26.05 s
+[INFO] [1783412479.802394]:   [jump_response/sin_accel_straight] LKF incr: IAE=63.36 m·s, t_conv=nan s
+[INFO] [1783412479.809484]:   [jump_response/sin_accel_straight] Vis fixed R/t: IAE=5.60 m·s, t_conv=8.75 s
+[INFO] [1783412479.813142]: --- jump_response / sin_accel_straight  repeat 3/5 ---
+[INFO] [1783412547.467379]:   [jump_response/sin_accel_straight] Ours (cascade): IAE=0.10 m·s, t_conv=1.00 s
+[INFO] [1783412547.471015]:   [jump_response/sin_accel_straight] Whole KF: IAE=34.42 m·s, t_conv=27.55 s
+[INFO] [1783412547.474766]:   [jump_response/sin_accel_straight] LKF incr: IAE=66.09 m·s, t_conv=nan s
+[INFO] [1783412547.478755]:   [jump_response/sin_accel_straight] Vis fixed R/t: IAE=7.02 m·s, t_conv=11.40 s
+[INFO] [1783412547.481574]: --- jump_response / sin_accel_straight  repeat 4/5 ---
+[INFO] [1783412614.959572]:   [jump_response/sin_accel_straight] Ours (cascade): IAE=0.11 m·s, t_conv=1.00 s
+[INFO] [1783412614.964038]:   [jump_response/sin_accel_straight] Whole KF: IAE=40.33 m·s, t_conv=35.25 s
+[INFO] [1783412614.967665]:   [jump_response/sin_accel_straight] LKF incr: IAE=24.85 m·s, t_conv=10.65 s
+[INFO] [1783412614.970814]:   [jump_response/sin_accel_straight] Vis fixed R/t: IAE=8.01 m·s, t_conv=8.50 s
+[INFO] [1783412614.973793]: --- jump_response / sin_accel_straight  repeat 5/5 ---
+[INFO] [1783412682.568527]:   [jump_response/sin_accel_straight] Ours (cascade): IAE=0.21 m·s, t_conv=1.00 s
+[INFO] [1783412682.572644]:   [jump_response/sin_accel_straight] Whole KF: IAE=35.18 m·s, t_conv=28.70 s
+[INFO] [1783412682.576262]:   [jump_response/sin_accel_straight] LKF incr: IAE=70.50 m·s, t_conv=nan s
+[INFO] [1783412682.580721]:   [jump_response/sin_accel_straight] Vis fixed R/t: IAE=5.62 m·s, t_conv=7.65 s
+[INFO] [1783412683.836244]: Saved experiment_results_5x/jump_response/error_mean_wavy_circle.png
+[INFO] [1783412684.622685]: Saved experiment_results_5x/jump_response/error_mean_sin_accel_straight.png
+[INFO] [1783412684.626451]: ======== Exp B: Continuous drift (no initial jump) (×5 repeats) ========
+[INFO] [1783412684.641032]: --- drift / wavy_circle  repeat 1/5 ---
+[INFO] [1783412751.997360]:   [drift/wavy_circle] Ours (cascade): mean=0.124 max=0.271 min=0.005 m
+[INFO] [1783412752.000875]:   [drift/wavy_circle] Whole KF: mean=0.928 max=3.456 min=0.015 m
+[INFO] [1783412752.003594]:   [drift/wavy_circle] LKF incr: mean=1.328 max=2.195 min=0.593 m
+[INFO] [1783412752.005689]:   [drift/wavy_circle] Vis fixed R/t: mean=0.503 max=1.229 min=0.058 m
+[INFO] [1783412752.009974]: --- drift / wavy_circle  repeat 2/5 ---
+[INFO] [1783412819.401392]:   [drift/wavy_circle] Ours (cascade): mean=0.133 max=0.339 min=0.018 m
+[INFO] [1783412819.407260]:   [drift/wavy_circle] Whole KF: mean=0.959 max=3.395 min=0.012 m
+[INFO] [1783412819.410331]:   [drift/wavy_circle] LKF incr: mean=1.333 max=2.237 min=0.633 m
+[INFO] [1783412819.412846]:   [drift/wavy_circle] Vis fixed R/t: mean=0.536 max=1.359 min=0.092 m
+[INFO] [1783412819.415003]: --- drift / wavy_circle  repeat 3/5 ---
+[INFO] [1783412886.807223]:   [drift/wavy_circle] Ours (cascade): mean=0.132 max=0.314 min=0.013 m
+[INFO] [1783412886.811111]:   [drift/wavy_circle] Whole KF: mean=0.928 max=3.137 min=0.013 m
+[INFO] [1783412886.814679]:   [drift/wavy_circle] LKF incr: mean=1.248 max=2.303 min=0.655 m
+[INFO] [1783412886.821242]:   [drift/wavy_circle] Vis fixed R/t: mean=0.505 max=1.318 min=0.095 m
+[INFO] [1783412886.824419]: --- drift / wavy_circle  repeat 4/5 ---
+[INFO] [1783412954.175621]:   [drift/wavy_circle] Ours (cascade): mean=0.128 max=0.301 min=0.007 m
+[INFO] [1783412954.180559]:   [drift/wavy_circle] Whole KF: mean=1.082 max=3.966 min=0.011 m
+[INFO] [1783412954.183223]:   [drift/wavy_circle] LKF incr: mean=1.441 max=3.050 min=0.720 m
+[INFO] [1783412954.186137]:   [drift/wavy_circle] Vis fixed R/t: mean=0.535 max=1.357 min=0.128 m
+[INFO] [1783412954.188956]: --- drift / wavy_circle  repeat 5/5 ---
+[INFO] [1783413021.428170]:   [drift/wavy_circle] Ours (cascade): mean=0.123 max=0.310 min=0.013 m
+[INFO] [1783413021.437099]:   [drift/wavy_circle] Whole KF: mean=1.185 max=3.917 min=0.029 m
+[INFO] [1783413021.442469]:   [drift/wavy_circle] LKF incr: mean=1.447 max=2.962 min=0.639 m
+[INFO] [1783413021.446753]:   [drift/wavy_circle] Vis fixed R/t: mean=0.513 max=1.304 min=0.082 m
+[INFO] [1783413021.701671]: --- drift / sin_accel_straight  repeat 1/5 ---
+[INFO] [1783413089.002347]:   [drift/sin_accel_straight] Ours (cascade): mean=0.120 max=0.281 min=0.007 m
+[INFO] [1783413089.007512]:   [drift/sin_accel_straight] Whole KF: mean=0.585 max=4.444 min=0.006 m
+[INFO] [1783413089.010983]:   [drift/sin_accel_straight] LKF incr: mean=0.618 max=1.776 min=0.068 m
+[INFO] [1783413089.014990]:   [drift/sin_accel_straight] Vis fixed R/t: mean=0.551 max=2.176 min=0.028 m
+[INFO] [1783413089.022707]: --- drift / sin_accel_straight  repeat 2/5 ---
+[INFO] [1783413156.270678]:   [drift/sin_accel_straight] Ours (cascade): mean=0.111 max=0.263 min=0.009 m
+[INFO] [1783413156.274383]:   [drift/sin_accel_straight] Whole KF: mean=0.641 max=4.958 min=0.010 m
+[INFO] [1783413156.285293]:   [drift/sin_accel_straight] LKF incr: mean=0.524 max=1.180 min=0.015 m
+[INFO] [1783413156.289017]:   [drift/sin_accel_straight] Vis fixed R/t: mean=0.561 max=2.211 min=0.057 m
+[INFO] [1783413156.292193]: --- drift / sin_accel_straight  repeat 3/5 ---
+[INFO] [1783413223.555188]:   [drift/sin_accel_straight] Ours (cascade): mean=0.116 max=0.333 min=0.008 m
+[INFO] [1783413223.560262]:   [drift/sin_accel_straight] Whole KF: mean=0.581 max=4.421 min=0.010 m
+[INFO] [1783413223.564219]:   [drift/sin_accel_straight] LKF incr: mean=0.609 max=1.818 min=0.056 m
+[INFO] [1783413223.572075]:   [drift/sin_accel_straight] Vis fixed R/t: mean=0.551 max=2.064 min=0.072 m
+[INFO] [1783413223.575648]: --- drift / sin_accel_straight  repeat 4/5 ---
+[INFO] [1783413290.935287]:   [drift/sin_accel_straight] Ours (cascade): mean=0.115 max=0.334 min=0.008 m
+[INFO] [1783413290.940820]:   [drift/sin_accel_straight] Whole KF: mean=0.116 max=0.350 min=0.006 m
+[INFO] [1783413290.944309]:   [drift/sin_accel_straight] LKF incr: mean=0.705 max=1.669 min=0.039 m
+[INFO] [1783413290.947139]:   [drift/sin_accel_straight] Vis fixed R/t: mean=0.533 max=1.894 min=0.038 m
+[INFO] [1783413290.950224]: --- drift / sin_accel_straight  repeat 5/5 ---
+[INFO] [1783413358.244823]:   [drift/sin_accel_straight] Ours (cascade): mean=0.150 max=0.325 min=0.023 m
+[INFO] [1783413358.249175]:   [drift/sin_accel_straight] Whole KF: mean=0.677 max=5.349 min=0.014 m
+[INFO] [1783413358.253207]:   [drift/sin_accel_straight] LKF incr: mean=0.642 max=1.459 min=0.052 m
+[INFO] [1783413358.257852]:   [drift/sin_accel_straight] Vis fixed R/t: mean=0.586 max=2.273 min=0.019 m
+[INFO] [1783413359.269588]: Saved experiment_results_5x/drift/error_mean_wavy_circle.png
+[INFO] [1783413360.625854]: Saved experiment_results_5x/drift/error_mean_sin_accel_straight.png
+[INFO] [1783413364.178603]: Saved experiment_results_5x/results.json
+[INFO] [1783413364.183622]: Saved experiment_results_5x/summary_table.csv
+[INFO] [1783413364.186843]: Saved experiment_results_5x/summary_table.md
+[INFO] [1783413367.237893]: Saved experiment_results_5x/summary_unified.png
+[INFO] [1783413367.241809]: --- Summary ---
+[INFO] [1783413367.245759]: | Method | wavy_circle | sin_accel_straight |
+[INFO] [1783413367.265553]: | Ours (cascade) | 0.62±0.58 | 0.84±0.97 |
+[INFO] [1783413367.269286]: | Whole KF | 58.74±6.09 | 38.06±6.19 |
+[INFO] [1783413367.272657]: | LKF incr | 94.50±5.94 | 60.03±20.19 |
+[INFO] [1783413367.275927]: | Vis fixed R/t | 10.93±12.96 | 6.36±1.11 |
+[INFO] [1783413367.279438]: | Method | wavy_circle | sin_accel_straight |
+[INFO] [1783413367.288651]: | Ours (cascade) | 1.44±0.70 | 2.27±2.52 |
+[INFO] [1783413367.294395]: | Whole KF | 31.59±0.73 | 30.92±4.91 |
+[INFO] [1783413367.297206]: | LKF incr | NC (0/5) | 10.65 (1/5) |
+[INFO] [1783413367.299444]: | Vis fixed R/t | 12.29±16.40 (4/5) | 8.96±1.43 |
+[INFO] [1783413367.301816]: | Method | wavy_circle | sin_accel_straight |
+[INFO] [1783413367.304569]: | Ours (cascade) | 0.128±0.005 | 0.122±0.016 |
+[INFO] [1783413367.306622]: | Whole KF | 1.016±0.114 | 0.520±0.229 |
+[INFO] [1783413367.308830]: | LKF incr | 1.360±0.084 | 0.620±0.066 |
+[INFO] [1783413367.310974]: | Vis fixed R/t | 0.518±0.016 | 0.557±0.020 |
+[INFO] [1783413367.314978]: | Method | wavy_circle | sin_accel_straight |
+[INFO] [1783413367.332278]: | Ours (cascade) | 0.307±0.025 | 0.307±0.033 |
+[INFO] [1783413367.335251]: | Whole KF | 3.574±0.357 | 3.904±2.024 |
+[INFO] [1783413367.337733]: | LKF incr | 2.549±0.420 | 1.580±0.264 |
+[INFO] [1783413367.339755]: | Vis fixed R/t | 1.313±0.053 | 2.123±0.149 |
+[INFO] [1783413367.341723]: | Method | wavy_circle | sin_accel_straight |
+[INFO] [1783413367.343731]: | Ours (cascade) | 0.011±0.005 | 0.011±0.007 |
+[INFO] [1783413367.364823]: | Whole KF | 0.016±0.008 | 0.009±0.003 |
+[INFO] [1783413367.368570]: | LKF incr | 0.648±0.046 | 0.046±0.020 |
+[INFO] [1783413367.371435]: | Vis fixed R/t | 0.091±0.025 | 0.043±0.021 |
+[INFO] [1783413367.373560]: Done. Results in experiment_results_5x

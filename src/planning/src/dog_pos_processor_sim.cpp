@@ -1,7 +1,105 @@
 #include "dog_pos_processor.h"
 #include <ros/ros.h>
 #include <Eigen/Dense>
+#include <chrono>
 #include <cmath>
+
+namespace {
+
+// 与 dog_pos_processor_kf 对齐的 LKF 参数（原 sim：外参 gain=0.04，输出 KF Q=0.01 R=0.1）
+constexpr double kTimerDt = 0.05;
+constexpr double kExtrinsicAlpha = 0.04;
+constexpr double kExtrinsicMeasStd = 0.05;
+constexpr double kExtrinsicMeasVar = kExtrinsicMeasStd * kExtrinsicMeasStd;
+constexpr double kExtrinsicQ = kExtrinsicAlpha * kExtrinsicMeasVar / (1.0 - kExtrinsicAlpha);
+constexpr double kExtrinsicR = kExtrinsicMeasVar;
+constexpr double kOutputProcessNoise = 0.01;
+constexpr double kOutputMeasNoise = 0.1;
+constexpr double kOutputQRate = kOutputProcessNoise / kTimerDt;
+constexpr double kExtrinsicQRate = kExtrinsicQ / kTimerDt;
+
+void logIterMsThrottled(const char* tag,
+                          const std::chrono::steady_clock::time_point& t0) {
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    ROS_INFO_THROTTLE(1.0, "%s: one iter %.3f ms", tag, ms);
+}
+
+class ScalarLkf {
+public:
+    ScalarLkf(double q_rate, double r) : q_rate_(q_rate), r_(r), x_(0.0), p_(r), initialized_(false) {}
+
+    void reset(double x = 0.0) {
+        x_ = x;
+        p_ = r_;
+        initialized_ = false;
+    }
+
+    double state() const { return x_; }
+
+    void update(double z, double dt, bool angle_wrap = false) {
+        if (!initialized_) {
+            x_ = z;
+            p_ = r_;
+            initialized_ = true;
+            return;
+        }
+        if (dt <= 0.0) dt = kTimerDt;
+        p_ += q_rate_ * dt;
+        const double innov = angle_wrap ? wrapAngle(z - x_) : (z - x_);
+        const double k = p_ / (p_ + r_);
+        x_ += k * innov;
+        if (angle_wrap) {
+            x_ = wrapAngle(x_);
+        }
+        p_ = (1.0 - k) * p_;
+    }
+
+private:
+    static double wrapAngle(double a) {
+        while (a > M_PI) a -= 2.0 * M_PI;
+        while (a < -M_PI) a += 2.0 * M_PI;
+        return a;
+    }
+
+    double q_rate_, r_;
+    double x_, p_;
+    bool initialized_;
+};
+
+class Vec3Lkf {
+public:
+    Vec3Lkf(double q_rate, double r) : fx_(q_rate, r), fy_(q_rate, r), fz_(q_rate, r) {}
+
+    void reset(const Eigen::Vector3d& x = Eigen::Vector3d::Zero()) {
+        fx_.reset(x.x());
+        fy_.reset(x.y());
+        fz_.reset(x.z());
+    }
+
+    Eigen::Vector3d state() const {
+        return Eigen::Vector3d(fx_.state(), fy_.state(), fz_.state());
+    }
+
+    void update(const Eigen::Vector3d& z, double dt) {
+        fx_.update(z.x(), dt);
+        fy_.update(z.y(), dt);
+        fz_.update(z.z(), dt);
+    }
+
+private:
+    ScalarLkf fx_, fy_, fz_;
+};
+
+ScalarLkf s_yaw_offset_lkf(kExtrinsicQRate, kExtrinsicR);
+Vec3Lkf s_pos_offset_lkf(kExtrinsicQRate, kExtrinsicR);
+
+void resetExtrinsicLkf(double yaw_off, const Eigen::Vector3d& pos_off) {
+    s_yaw_offset_lkf.reset(yaw_off);
+    s_pos_offset_lkf.reset(pos_off);
+}
+
+}  // namespace
 
 /*
  * Dog Position Processor Module
@@ -33,9 +131,10 @@ KalmanFilter::KalmanFilter(double process_noise, double measurement_noise)
     H_ = Eigen::MatrixXd::Identity(6, 6);
 }
 
-// 预测步骤
+// 预测步骤（Q 随 dt 缩放：Q = kOutputQRate * dt * I，名义 dt=kTimerDt 时等于 kOutputProcessNoise）
 void KalmanFilter::predict(double dt) {
     if (!initialized_) return;
+    if (dt <= 0.0) dt = kTimerDt;
     
     // 构建状态转移矩阵（恒定速度模型）
     Eigen::MatrixXd F = F_base_;
@@ -47,7 +146,7 @@ void KalmanFilter::predict(double dt) {
     state_ = F * state_;
     
     // 预测协方差
-    covariance_ = F * covariance_ * F.transpose() + Q_;
+    covariance_ = F * covariance_ * F.transpose() + Q_ * (dt / kTimerDt);
 }
 
 // 更新步骤
@@ -108,6 +207,8 @@ void KalmanFilter::reset() {
     // covariance_ = Eigen::MatrixXd::Identity(6, 6) * 100.0;
     initialized_ = false;
 }
+
+// 外参 LKF（替代原 yaw/pos 线性滤波 gain=0.04）
 
 // 默认时间间隔参数
 static const double default_dt = -1.0;  // 默认时间间隔（秒）
@@ -176,7 +277,7 @@ DogPosProcessor::DogPosProcessor()
       last_dog_vel_time_(0.0),
       acc_filter_gain_(0.3),
       dog_acc_initialized_(false),
-      kf_(0.01, 0.1),
+      kf_(kOutputProcessNoise, kOutputMeasNoise),
       kf_enabled_(true),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
@@ -185,15 +286,15 @@ DogPosProcessor::DogPosProcessor()
       trigger_received_(false),
       offset_history_max_size_(10) {  // 历史记录最大长度：100个样本（约5秒，50ms周期）
     
-    // 参数（完全按照traj_server.cpp的设置）
-    yaw_filter_gain_ = 0.04;  // yaw offset滤波增益
+    // 外参原线性增益 0.04 → 已由 ScalarLkf/Vec3Lkf 替代（见 dog_pos_processor_tuning.h）
+    yaw_filter_gain_ = kExtrinsicAlpha;
     yaw_stable_threshold_ = M_PI * 5.0 / 180.0;  // 5度，yaw稳定阈值
     yaw_exceed_threshold_ = M_PI * 45.0 / 180.0;  // 45度，yaw超限阈值
     yaw_exceed_max_count_ = 5;  // yaw超限最大计数
     pos_stable_threshold_ = 0.05;  // 5cm，位置稳定阈值
     pos_exceed_threshold_ = 0.3;  // 30cm，位置超限阈值
     pos_exceed_max_count_ = 5;  // 位置超限最大计数
-    pos_filter_gain_ = 0.04;  // 位置滤波增益
+    pos_filter_gain_ = kExtrinsicAlpha;
     aoa_pos_filter_gain_ = 0.05;  // AOA位置滤波增益（比pos_filter_gain小）
     aoa_pos_step_limit_ = 0.02;   // AOA单次迭代上限（米）
     
@@ -237,7 +338,9 @@ DogPosProcessor::DogPosProcessor()
         camera_offset_ = 0.0;
     }
 
-    ROS_INFO("Dog Position Processor initialized");
+    ROS_INFO("dog_pos_processor_sim (Ours): cascade LKF + R/t -> /dog_pos_processed");
+    ROS_INFO("  extrinsic Q=%.2e R=%.2e ~alpha=%.3f, output Q=%.3f R=%.3f",
+             kExtrinsicQ, kExtrinsicR, kExtrinsicAlpha, kOutputProcessNoise, kOutputMeasNoise);
     ROS_INFO("Waiting for takeoff signal and yaw diff from traj_server...");
     ROS_INFO("Initial yaw offset: 0.0 rad (0.0 deg)");
 }
@@ -254,50 +357,13 @@ double DogPosProcessor::normalizeAngle(double angle) {
 void DogPosProcessor::rawDogPosCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     raw_dog_pos_ = msg;
     raw_dog_pos_count_++;
-    
-    // 提取位置、速度、yaw（raw_dog_pos消息不包含pitch和roll）
-    Eigen::Vector3d current_raw_dog_vel(
-        msg->twist.twist.linear.x,
-        msg->twist.twist.linear.y,
-        msg->twist.twist.linear.z
-    );
-    double current_raw_dog_yaw = msg->pose.pose.orientation.w;
-    
-    // 速度限制（完全按照callback.cpp）
-    const double min_dog_velocity = -2.0;
-    const double max_dog_velocity = 2.0;
-    current_raw_dog_vel.x() = std::max(min_dog_velocity, std::min(max_dog_velocity, current_raw_dog_vel.x()));
-    current_raw_dog_vel.y() = std::max(min_dog_velocity, std::min(max_dog_velocity, current_raw_dog_vel.y()));
-    current_raw_dog_vel.z() = std::max(min_dog_velocity, std::min(max_dog_velocity, current_raw_dog_vel.z()));
-    
-    // 速度滤波（完全按照callback.cpp的逻辑）
-    if (!dog_vel_initialized_) {
-        raw_dog_vel_ = current_raw_dog_vel;
-        raw_dog_yaw_ = current_raw_dog_yaw;
-        dog_vel_initialized_ = true;
-        
-        // 初始化last值（使用final值，经过target_yaw转换）
-        double target_yaw = normalizeAngle(raw_dog_yaw_ - yaw_offset_);
-        double cos_yaw = std::cos(target_yaw);
-        double sin_yaw = std::sin(target_yaw);
-        last_dog_vel_.x() = cos_yaw * raw_dog_vel_.x() - sin_yaw * raw_dog_vel_.y();
-        last_dog_vel_.y() = sin_yaw * raw_dog_vel_.x() + cos_yaw * raw_dog_vel_.y();
-        last_dog_vel_.z() = raw_dog_vel_.z();
-    } else {
-        // 先更新raw_dog_vel_和raw_dog_yaw_（用于后续计算final值）
-        // 狗头
-        raw_dog_vel_.x() = 0.7 * raw_dog_vel_.x() + 0.3 * current_raw_dog_vel.x();
-        // 狗侧
-        raw_dog_vel_.y() = 0.7 * raw_dog_vel_.y() + 0.3 * current_raw_dog_vel.y();
-        // 狗上
-        raw_dog_vel_.z() = current_raw_dog_vel.z();
-        
-        // yaw滤波（完全按照callback.cpp）
-        double delta_yaw = normalizeAngle(current_raw_dog_yaw - raw_dog_yaw_);
-        raw_dog_yaw_ += 0.5 * delta_yaw;
-    }
-    
-    // 收到raw dog pos后立即发布处理后的dog_pos
+
+    raw_dog_vel_.x() = msg->twist.twist.linear.x;
+    raw_dog_vel_.y() = msg->twist.twist.linear.y;
+    raw_dog_vel_.z() = msg->twist.twist.linear.z;
+    raw_dog_yaw_ = msg->pose.pose.orientation.w;
+    dog_vel_initialized_ = true;
+
     publishProcessedDogPos();
 }
 
@@ -416,10 +482,12 @@ void DogPosProcessor::vinsCallback(const nav_msgs::Odometry::ConstPtr& msg) {
 void DogPosProcessor::takeoffCallback(const quadrotor_msgs::TakeoffLand::ConstPtr& msg) {
     if (msg->takeoff_land_cmd == 1) {  // 起飞命令
         ROS_INFO("Takeoff detected, yaw offset will be reinitialized");
-        initialized_ = false;  // 重置初始化状态
+        initialized_ = false;
         precise_yaw_offset_ready_ = false;
         precise_pos_offset_ready_ = false;
         trigger_received_ = false;
+        resetExtrinsicLkf(0.0, Eigen::Vector3d::Zero());
+        kf_.reset();
     }
 }
 
@@ -440,6 +508,8 @@ void DogPosProcessor::testResetCallback(const std_msgs::Bool::ConstPtr& msg) {
     initialized_ = false;
     precise_yaw_offset_ready_ = false;
     precise_pos_offset_ready_ = false;
+    resetExtrinsicLkf(0.0, Eigen::Vector3d::Zero());
+    kf_.reset();
 }
 
 // Trigger回调（使用PoseStamped，占位内容无需读取）
@@ -509,78 +579,67 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
 
 // 主处理回调（完全按照traj_server.cpp的逻辑）
 void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
-    // 处理起飞重新初始化
+    const auto iter_t0 = std::chrono::steady_clock::now();
+    double timer_dt = (event.current_real - event.last_real).toSec();
+    if (timer_dt <= 0.0) timer_dt = kTimerDt;
+
     if (!initialized_ && raw_dog_pos_received_ && vins_received_) {
-        // 使用新的初始化方式：raw_dog_yaw - (vins_yaw + diff)
         double diff = 0.0;
         if (saved_yaw_diff_ != nullptr) {
             diff = *saved_yaw_diff_;
             delete saved_yaw_diff_;
             saved_yaw_diff_ = nullptr;
-        } else {
-            diff = 0.0;  // 默认diff=0
         }
-        
+
         yaw_offset_ = normalizeAngle(raw_dog_yaw_ - (vins_yaw_ + diff));
-        
-        // 位置偏移：raw_dog_pos
-        // 将vins位置按照yaw_offset旋转后，加到pos_offset后面
-        double cos_yaw = std::cos(yaw_offset_);
-        double sin_yaw = std::sin(yaw_offset_);
-        Eigen::Vector3d rotated_vins_pos(
+
+        const double cos_yaw = std::cos(yaw_offset_);
+        const double sin_yaw = std::sin(yaw_offset_);
+        const Eigen::Vector3d rotated_vins_pos(
             cos_yaw * vins_pos_.x() - sin_yaw * vins_pos_.y(),
             sin_yaw * vins_pos_.x() + cos_yaw * vins_pos_.y(),
-            vins_pos_.z()
-        );
-        Eigen::Vector3d tmp_p(
+            vins_pos_.z());
+        const Eigen::Vector3d tmp_p(
             raw_dog_pos_->pose.pose.position.x,
             raw_dog_pos_->pose.pose.position.y,
-            raw_dog_pos_->pose.pose.position.z
-        );
+            raw_dog_pos_->pose.pose.position.z);
         pos_offset_ = tmp_p - rotated_vins_pos;
-        
+
+        resetExtrinsicLkf(yaw_offset_, pos_offset_);
+
         ROS_INFO("Reinitialized offsets: yaw_offset=%.1f deg, pos_offset=[%.3f, %.3f, %.3f]",
                  yaw_offset_ * 180.0 / M_PI, pos_offset_.x(), pos_offset_.y(), pos_offset_.z());
-        
-        // 清空历史记录，重新开始记录
+
         yaw_offset_history_.clear();
         pos_offset_history_.clear();
-        
-        // 自动进入预设模式
-        initialized_ = true;  // 初始化完成
+
+        initialized_ = true;
         precise_pos_offset_ready_ = true;
         precise_yaw_offset_ready_ = true;
     }
-    
-    // 处理hc14_dog数据：当同时收到target和hc14数据时，维护yaw和pos差值补偿；如果使用预设offset，则不进行迭代
-    // 只有在初始化后且收到trigger后才进行offset迭代
+
     if (target_receive_ && raw_dog_pos_received_ && vins_received_) {
-        // 正常的yaw offset迭代逻辑
-        double current_yaw_offset = normalizeAngle(raw_dog_yaw_ - target_dog_yaw_);
-        double yaw_offset_diff = normalizeAngle(current_yaw_offset - yaw_offset_);
-        // 处理角度环绕问题
-        yaw_offset_diff = normalizeAngle(yaw_offset_diff);
-        
-        // 对yaw offset进行线性滤波，防止突变
-        yaw_offset_ += yaw_filter_gain_ * yaw_offset_diff;
-        
-        // 记录yaw_offset历史值用于计算方差
+        const double current_yaw_offset = normalizeAngle(raw_dog_yaw_ - target_dog_yaw_);
+        const double yaw_before = yaw_offset_;
+        s_yaw_offset_lkf.update(current_yaw_offset, timer_dt, true);
+        yaw_offset_ = s_yaw_offset_lkf.state();
+        const double yaw_offset_diff = normalizeAngle(current_yaw_offset - yaw_before);
+
         yaw_offset_history_.push_back(yaw_offset_);
         if (yaw_offset_history_.size() > offset_history_max_size_) {
             yaw_offset_history_.pop_front();
         }
-        
-        // 标记hc14_dog信息可用，采用计数器方式防止抖动
+
         if (std::abs(yaw_offset_diff) < yaw_stable_threshold_) {
             if (!precise_yaw_offset_ready_) {
                 ROS_INFO("precise_yaw_offset_ready!");
                 if (precise_pos_offset_ready_) {
-                    initialized_ = true;  // 通过迭代达到precise_yaw_offset_ready和precise_pos_offset_ready，设置initialized
+                    initialized_ = true;
                 }
             }
             precise_yaw_offset_ready_ = true;
         }
-        
+
         if (std::abs(yaw_offset_diff) > yaw_exceed_threshold_) {
             yaw_exceed_timer_++;
             if (yaw_exceed_timer_ > yaw_exceed_max_count_) {
@@ -593,55 +652,44 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         }
 
         if (precise_yaw_offset_ready_) {
-            // 更新位置偏移：raw_dog_pos - vins_pos
-            Eigen::Vector3d raw_dog_pos(
+            const Eigen::Vector3d raw_dog_pos(
                 raw_dog_pos_->pose.pose.position.x,
                 raw_dog_pos_->pose.pose.position.y,
-                raw_dog_pos_->pose.pose.position.z
-            );
+                raw_dog_pos_->pose.pose.position.z);
 
-            // 计算前馈偏移量（基于final_dog_vel，在世界坐标系下）
-            // 参考traj_server: offset = camera_offset * vel
-            // target_dog_pos先加上前馈偏移量（在世界坐标系下）
-            Eigen::Vector3d target_dog_pos_with_ff(
-                target_dog_pos_.x() + camera_offset_ * final_dog_vel_.x() + 0.5 * camera_offset_ * camera_offset_ * final_dog_acc_.x(),
-                target_dog_pos_.y() + camera_offset_ * final_dog_vel_.y() + 0.5 * camera_offset_ * camera_offset_ * final_dog_acc_.y(),
-                target_dog_pos_.z()
-            );
-            
-            // 然后将加上前馈后的target_dog_pos旋转到狗坐标系
-            double cos_yaw = std::cos(yaw_offset_);
-            double sin_yaw = std::sin(yaw_offset_);
-            Eigen::Vector3d rotated_target(
+            const Eigen::Vector3d target_dog_pos_with_ff(
+                target_dog_pos_.x() + camera_offset_ * final_dog_vel_.x()
+                    + 0.5 * camera_offset_ * camera_offset_ * final_dog_acc_.x(),
+                target_dog_pos_.y() + camera_offset_ * final_dog_vel_.y()
+                    + 0.5 * camera_offset_ * camera_offset_ * final_dog_acc_.y(),
+                target_dog_pos_.z());
+
+            const double cos_yaw = std::cos(yaw_offset_);
+            const double sin_yaw = std::sin(yaw_offset_);
+            const Eigen::Vector3d rotated_target(
                 cos_yaw * target_dog_pos_with_ff.x() - sin_yaw * target_dog_pos_with_ff.y(),
                 sin_yaw * target_dog_pos_with_ff.x() + cos_yaw * target_dog_pos_with_ff.y(),
-                target_dog_pos_with_ff.z()
-            );
-            
-            Eigen::Vector3d current_pos_offset = raw_dog_pos - rotated_target;
-            
-            // 对位置偏移进行线性滤波，防止突变
-            Eigen::Vector3d pos_offset_diff = current_pos_offset - pos_offset_;
-            pos_offset_ += pos_filter_gain_ * pos_offset_diff;
-            
-            // 记录pos_offset历史值用于计算方差
+                target_dog_pos_with_ff.z());
+
+            const Eigen::Vector3d current_pos_offset = raw_dog_pos - rotated_target;
+            const Eigen::Vector3d pos_before = pos_offset_;
+            s_pos_offset_lkf.update(current_pos_offset, timer_dt);
+            pos_offset_ = s_pos_offset_lkf.state();
+
             pos_offset_history_.push_back(pos_offset_);
             if (pos_offset_history_.size() > offset_history_max_size_) {
                 pos_offset_history_.pop_front();
             }
-            
-            // 计算位置偏移差值
-            double pos_offset_diff_norm = (current_pos_offset - pos_offset_).norm();
-            
-            // 标记位置偏移是否精确ready
+
+            const double pos_offset_diff_norm = (current_pos_offset - pos_before).norm();
+
             if (pos_offset_diff_norm < pos_stable_threshold_) {
                 if (!precise_pos_offset_ready_) {
                     ROS_INFO("precise_pos_offset_ready!");
                     if (precise_yaw_offset_ready_) {
-                        initialized_ = true;  // 通过迭代达到precise_yaw_offset_ready和precise_pos_offset_ready，设置initialized
+                        initialized_ = true;
                     }
-                    // 位置收敛时重置卡尔曼滤波器
-                    ROS_INFO("Position converged, resetting Kalman filter");
+                    ROS_INFO("Position converged, resetting output Kalman filter");
                     kf_.reset();
                     last_kf_time_ = ros::Time();
                     yaw_filter_initialized_ = false;
@@ -649,7 +697,7 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
                 }
                 precise_pos_offset_ready_ = true;
             }
-            
+
             if (pos_offset_diff_norm > pos_exceed_threshold_) {
                 pos_exceed_timer_++;
                 if (pos_exceed_timer_ > pos_exceed_max_count_) {
@@ -662,7 +710,7 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
             }
         }
     }
-    
+
     // 维护AOA位置偏移（单距离单角度方案）
     // 前提：yaw ready、vins可用、aoa可用，且飞机朝向与当前处理后狗位姿夹角在±30度内
     if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_) {
@@ -896,11 +944,15 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         
         // z方向不迭代，保持不变
     }
+
+    logIterMsThrottled("dog_pos_processor [timer]", iter_t0);
 }
 
 // 发布处理后的dog_pos（使用Odometry格式）
 void DogPosProcessor::publishProcessedDogPos() {
     if (raw_dog_pos_ == nullptr) return;
+
+    const auto iter_t0 = std::chrono::steady_clock::now();
     
     nav_msgs::Odometry msg;
     msg.header.stamp = ros::Time::now();
@@ -1022,8 +1074,12 @@ void DogPosProcessor::publishProcessedDogPos() {
     // x = yaw_offset标准差
     // y = 加速度x（世界坐标系）
     // z = 加速度y（世界坐标系）
-    msg.pose.pose.orientation.w = precise_pos_offset_ready_ ? 1.0 : 0.0;
-    msg.pose.pose.orientation.x = precise_yaw_offset_ready_ ? 1.0 : 0.0;
+
+    // msg.pose.pose.orientation.w = precise_pos_offset_ready_ ? 1.0 : 0.0;
+    // msg.pose.pose.orientation.x = precise_yaw_offset_ready_ ? 1.0 : 0.0;
+
+    msg.pose.pose.orientation.w = 1.0;  // pos_ready（降落实验恒 true）
+    msg.pose.pose.orientation.x = 1.0;  // yaw_ready（降落实验恒 true）
     msg.pose.pose.orientation.y = final_dog_acc_.x();  // 发布x方向加速度（世界坐标系）
     msg.pose.pose.orientation.z = final_dog_acc_.y();  // 发布y方向加速度（世界坐标系）
 
@@ -1040,6 +1096,7 @@ void DogPosProcessor::publishProcessedDogPos() {
     msg.twist.twist.angular.z = 0.0;
 
     dog_pos_pub_.publish(msg);
+    logIterMsThrottled("dog_pos_processor [raw]", iter_t0);
 }
 
 void DogPosProcessor::aoaCallback(const nav_msgs::Odometry::ConstPtr& msg) {
@@ -1063,7 +1120,7 @@ void DogPosProcessor::spin() {
 }
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "dog_pos_processor");
+    ros::init(argc, argv, "dog_pos_processor_sim");
     DogPosProcessor processor;
     processor.spin();
     return 0;

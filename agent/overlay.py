@@ -196,9 +196,13 @@ def _draw_waypoint_on_bgr(
     return out
 
 
-def _draw_detection_bbox_on_bgr(
+def _draw_bbox_on_bgr(
     bgr: np.ndarray,
     bbox_orig: tuple[int, int, int, int],
+    *,
+    color: tuple[int, int, int],
+    thickness: int,
+    label: str,
 ) -> np.ndarray:
     out = bgr.copy()
     h, w = out.shape[:2]
@@ -213,20 +217,32 @@ def _draw_detection_bbox_on_bgr(
         y1i, y2i = y2i, y1i
     cv2.rectangle(
         out, (x1i, y1i), (x2i, y2i),
-        _DETECT_COLOR, _DETECT_THICKNESS, lineType=cv2.LINE_AA,
+        color, thickness, lineType=cv2.LINE_AA,
     )
-    label = "object"
     cv2.putText(
         out,
         label,
         (x1i, max(14, y1i - 6)),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
-        _DETECT_COLOR,
+        color,
         1,
         cv2.LINE_AA,
     )
     return out
+
+
+def _draw_detection_bbox_on_bgr(
+    bgr: np.ndarray,
+    bbox_orig: tuple[int, int, int, int],
+) -> np.ndarray:
+    return _draw_bbox_on_bgr(
+        bgr,
+        bbox_orig,
+        color=_DETECT_COLOR,
+        thickness=_DETECT_THICKNESS,
+        label="object",
+    )
 
 
 def _build_padded_image_column(bgr: np.ndarray, col_w: int, col_h: int) -> np.ndarray:

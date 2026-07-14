@@ -1,0 +1,7 @@
+<launch>
+  <!-- 四方案同时对比（输出 topic 互不冲突） -->
+  <include file="$(find planning)/launch/dog_pos_processor_sim.launch" />
+  <include file="$(find planning)/launch/dog_pos_processor_kf.launch" />
+  <include file="$(find planning)/launch/dog_pos_processor_lkf.launch" />
+  <include file="$(find planning)/launch/dog_pos_processor_vis.launch" />
+</launch>

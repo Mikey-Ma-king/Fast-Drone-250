@@ -7,13 +7,17 @@ from __future__ import annotations
 import json
 import math
 import re
+import threading
 import rospy
 from nav_msgs.msg import Odometry
 
 from agent.attitude import rotate_body_to_world
 from agent.cmd_velocity import observe_target_command_velocity
-from agent.config import BODY_DELTA_MAX_M, CMD_Z_MAX_M, CMD_Z_MIN_M, YAW_DELTA_MAX_DEG
+from agent.config import BODY_DELTA_MAX_M, CMD_Z_MAX_M, CMD_Z_MIN_M, ENABLE_COMMAND_POS_VELOCITY, YAW_DELTA_MAX_DEG
 from agent.obstacle_avoidance import adjust_command_pos_for_obstacles
+
+_altitude_lock = threading.Lock()
+_command_target_wz: float | None = None
 
 
 def parse_drone_reply(text: str) -> dict[str, float]:
@@ -181,6 +185,32 @@ def clamp_world_z(wz: float) -> float:
     return wz_clamped
 
 
+def reset_command_target_z(vins_z: float | None = None) -> None:
+    """重置指令高度；None 表示下次发布时再从 VINS 初始化。"""
+    global _command_target_wz
+    with _altitude_lock:
+        _command_target_wz = float(vins_z) if vins_z is not None else None
+
+
+def get_command_target_z(vins_z: float) -> float:
+    """读取维护的世界系目标高度（首次从 VINS 初始化）。"""
+    global _command_target_wz
+    with _altitude_lock:
+        if _command_target_wz is None:
+            _command_target_wz = float(vins_z)
+        return clamp_world_z(_command_target_wz)
+
+
+def nudge_command_target_z(delta_m: float, vins_z: float) -> float:
+    """UP/DOWN：在维护高度上增减，避免每帧相对 VINS 叠加导致晃动。"""
+    global _command_target_wz
+    with _altitude_lock:
+        if _command_target_wz is None:
+            _command_target_wz = float(vins_z)
+        _command_target_wz = clamp_world_z(_command_target_wz + float(delta_m))
+        return _command_target_wz
+
+
 def publish_command_pos(
     pub: rospy.Publisher,
     *,
@@ -192,7 +222,10 @@ def publish_command_pos(
 ) -> None:
     wx, wy, wz = adjust_command_pos_for_obstacles(wx, wy, wz, vins_snap)
     wz = clamp_world_z(wz)
-    vx, vy, vz = observe_target_command_velocity(wx, wy, wz)
+    if ENABLE_COMMAND_POS_VELOCITY:
+        vx, vy, vz = observe_target_command_velocity(wx, wy, wz)
+    else:
+        vx, vy, vz = 0.0, 0.0, 0.0
 
     cmd = Odometry()
     cmd.header.stamp = rospy.Time.now()
