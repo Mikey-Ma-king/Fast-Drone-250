@@ -12,3 +12,7 @@ src/CMakeLists.txt
 *.svg
 *.zip
 *.mp4
+__pycache__/
+*.pyc
+*.pyo
+CLAUDE.md
