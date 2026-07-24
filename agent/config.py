@@ -87,8 +87,8 @@ SUBTASK_TIMEOUT_FALLBACK_DESC = "Change the strategy."  # 超时写入已完成�
 # 预览面板、终端统计、录像
 # =============================================================================
 
-SHOW_RGB = True  # True=cv2 弹窗（左图 + 右侧文字面板）
-SAVE_VIDEO = True  # True=把合成面板写入 mp4
+SHOW_RGB = False  # True=cv2 弹窗（左图 + 右侧文字面板）
+SAVE_VIDEO = False  # True=把合成面板写入 mp4
 VIDEO_SAVE_DIR = AGENT_DIR / "recordings"  # 录像输出目录
 VIDEO_SAVE_FPS = 5.0  # 录像帧率（Hz）；在 rgb 回调里节流写入
 

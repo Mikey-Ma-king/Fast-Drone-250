@@ -50,7 +50,7 @@ target_vel_history = []  # 存储最近10个速度点
 target_vel_history_times = []  # 存储对应的时间戳
 
 
-land_height_limit = [1.5, 1.8]
+land_height_limit = [1.5, 1.8] #return 高度限制
 
 class TargetFilter:
     def __init__(self, alpha=0.3, reset_interval=0.5):

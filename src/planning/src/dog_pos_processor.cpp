@@ -204,7 +204,7 @@ DogPosProcessor::DogPosProcessor()
     aoa_min_distance_ = 3.0;  // m
 
     // 仿真模式：camera_offset为0
-    simulate_mode_ = true;
+    simulate_mode_ = false;
     
     // 发布者 - 使用Odometry格式
     dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);

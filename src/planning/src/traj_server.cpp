@@ -149,7 +149,7 @@ double yaw_rate_pos_gain_forward = 0.0;  // 角速度前馈增益（前方分量
 double yaw_rate_vel_gain_forward = 0.00;  // 角速度前馈增益（前方分量）
 
 // 加速度和jerk限制参数
-const double max_accel = 1.2;  // 最大加速度限制 (m/s^2)
+const double max_accel = 1.2;  // 最大加速度限制 (m/s^2),不要动
 const double max_jerk = 100.0;   // 最大jerk限制 (m/s^3)
 const double accel_dt = 0.01;  // 时间间隔 (s)
 const double max_accel_z = 1.0;  // z方向最大加速度限制 (m/s^2)
@@ -236,7 +236,7 @@ v_offset_x = 0.0;
 v_offset_y = 0.0;
 #endif
 
-std::vector<double> land_height_limit = {1.2, 1.5};
+std::vector<double> land_height_limit = {1.2, 1.5};//track 高度限制
 
 std::vector<Eigen::Vector3d> target_p_list,target_v_list;
 
