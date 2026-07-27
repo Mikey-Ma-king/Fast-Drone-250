@@ -1,90 +1,106 @@
 #!/bin/bash
-# 飞机端背板蓝牙一键控制脚本（本地运行，蓝牙直连狗端舵机）
-# 功能: 环境检查 → 蓝牙守护进程 → 检查rfcomm → 抬起背板 → 等待离地 → 放下背板
-# 用法: ./back_panel.sh [等待秒数]
-# 默认等待: 5 秒（飞机离地时间）
+# 飞机端背板 USB 串口一键控制脚本（通过 hc-14.py 协议）
+# 功能: 环境检查 → USB设备检查 → 串口配置 → 发送触发
+# 用法: ./back_panel.sh
 
 set -e
 
-BLUETOOTH_MAC="39:93:17:13:48:B8"
-RFCOMM_DEVICE="/dev/rfcomm1"
-WAIT="${1:-5}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BLUETEETH_PY="$SCRIPT_DIR/blueteeth.py"
+USB_HC14_SEND="/dev/USB_hc14_send"
+USB_HC14_RECEIVE="/dev/USB_hc14_receive"
+BAUD=115200
+SUDO_PASS="123456"
 
 echo "=========================================="
-echo "  飞机端背板蓝牙一键控制"
-echo "  狗端舵机蓝牙: $BLUETOOTH_MAC"
-echo "  rfcomm:  $RFCOMM_DEVICE"
-echo "  等待:    ${WAIT}s"
+echo "  飞机端背板 USB 串口控制"
+echo "  主发送设备: $USB_HC14_SEND"
+echo "  备用设备:   $USB_HC14_RECEIVE"
+echo "  波特率:     $BAUD"
 echo "=========================================="
 
 # ── 1. 环境检查 ────────────────────────────────────────────
-echo "[1/5] 环境检查..."
+echo "[1/4] 环境检查..."
 
-if [ ! -f "$BLUETEETH_PY" ]; then
-    echo "  错误: 找不到 $BLUETEETH_PY"
+if ! command -v stty &>/dev/null; then
+    echo "  错误: stty 命令不可用"
     exit 1
 fi
-echo "  blueteeth.py 存在 ✓"
+echo "  stty 可用 ✓"
 
-if ! bluetoothctl info "$BLUETOOTH_MAC" &>/dev/null; then
-    echo "  错误: 蓝牙设备 $BLUETOOTH_MAC 未配对或不可达"
+if ! echo "$SUDO_PASS" | sudo -S true 2>/dev/null; then
+    echo "  错误: sudo 密码不正确"
     exit 1
 fi
-echo "  蓝牙已配对 ✓"
+echo "  sudo 就绪 ✓"
 
-if ! sudo -n true 2>/dev/null; then
-    echo "  错误: sudo 需要密码，请先配置免密"
-    exit 1
-fi
-echo "  sudo 免密 ✓"
+# ── 2. USB 设备检查 ────────────────────────────────────────
+echo "[2/4] 检查 USB 串口设备..."
 
-# ── 2. 蓝牙守护进程 ────────────────────────────────────────
-echo "[2/5] 检查蓝牙守护进程..."
-
-if pgrep -f "blueteeth.py" > /dev/null; then
-    echo "  blueteeth.py 已在运行 (PID: $(pgrep -f blueteeth.py))"
-else
-    echo "  启动 blueteeth.py..."
-    python3 "$BLUETEETH_PY" &
-    sleep 2
-    echo "  blueteeth.py 已启动 (PID: $!)"
-fi
-
-# ── 3. 等待 rfcomm 设备就绪 ────────────────────────────────
-echo "[3/5] 等待蓝牙 rfcomm 设备..."
-
-MAX_WAIT=15
-WAITED=0
-while [ ! -e "$RFCOMM_DEVICE" ]; do
-    if [ $WAITED -ge $MAX_WAIT ]; then
-        echo "  错误: ${MAX_WAIT}s 超时, $RFCOMM_DEVICE 未出现"
-        echo "  排查: (1) 狗端背板蓝牙模块上电? (2) sudo rfcomm -a"
-        echo "        (3) bluetoothctl info $BLUETOOTH_MAC"
+for dev in "$USB_HC14_SEND" "$USB_HC14_RECEIVE"; do
+    if [ ! -e "$dev" ]; then
+        echo "  错误: $dev 不存在"
+        echo "  排查: (1) USB 收发模块是否已插入?"
+        echo "        (2) udev 规则是否已配置?"
+        echo "        (3) ls /dev/USB_hc14_* 检查设备列表"
         exit 1
     fi
-    sleep 1
-    WAITED=$((WAITED + 1))
-    echo "  ... ${WAITED}s / ${MAX_WAIT}s"
+    if [ ! -c "$dev" ]; then
+        echo "  错误: $dev 不是字符设备"
+        exit 1
+    fi
+    if [ ! -w "$dev" ]; then
+        echo "  $dev 不可写，尝试修复权限..."
+        echo "$SUDO_PASS" | sudo -S chmod 777 "$dev" 2>/dev/null || {
+            echo "  错误: 无法修改 $dev 权限"
+            exit 1
+        }
+    fi
+    echo "  $dev 就绪 ✓"
 done
 
-sudo chmod 777 "$RFCOMM_DEVICE" 2>/dev/null || true
-echo "  $RFCOMM_DEVICE 就绪 ✓"
+# ── 3. 串口配置 ────────────────────────────────────────────
+echo "[3/4] 配置串口参数..."
 
-# ── 4. 抬起背板 ────────────────────────────────────────────
-echo "[4/5] 抬起背板..."
-printf '\x00\x5b\x00\x00\x70\x00' > "$RFCOMM_DEVICE"
-echo "  已发送抬起指令 ✓"
+for dev in "$USB_HC14_SEND" "$USB_HC14_RECEIVE"; do
+    if ! stty -F "$dev" $BAUD cs8 -cstopb -parenb 2>/dev/null; then
+        echo "  错误: 无法配置 $dev 波特率 $BAUD"
+        echo "  排查: (1) 设备是否被其他进程占用? (lsof $dev)"
+        echo "        (2) 设备是否支持 ${BAUD} 波特率?"
+        exit 1
+    fi
+    echo "  $dev 配置为 ${BAUD}/8N1 ✓"
+done
 
-# ── 5. 等待 & 放下背板 ─────────────────────────────────────
-echo "[5/5] 等待 ${WAIT}s（飞机离地）..."
-sleep "$WAIT"
+# ── 4. 发送触发信号 ────────────────────────────────────────
+echo "[4/4] 发送背板触发信号..."
 
-echo "  放下背板..."
-printf '\x00\x5c\x00\x00\x70\x00' > "$RFCOMM_DEVICE"
-echo "  已发送放下指令 ✓"
+send_ok=false
+for dev in "$USB_HC14_SEND" "$USB_HC14_RECEIVE"; do
+    echo "  尝试通过 $dev 发送..."
+    if echo -n "1@" > "$dev" 2>/dev/null; then
+        echo "  已通过 $dev 发送"
+    else
+        echo "  $dev 写入失败，尝试下一个..."
+        continue
+    fi
 
+    read -p "  观察背板是否正常动作? (yes/no): " confirm
+    if [ "$confirm" = "yes" ]; then
+        echo "  背板动作确认 ✓，配对设备: $dev"
+        send_ok=true
+        break
+    else
+        echo "  $dev 无反应，尝试下一个..."
+    fi
+done
+
+if ! $send_ok; then
+    echo "  错误: 所有设备发送失败"
+    echo "  排查: (1) 狗端 hc-14.py 是否已启动?"
+    echo "        (2) USB 收发模块是否配对正常?"
+    exit 1
+fi
+
+echo "  狗端 hc-14.py 收到后执行: PLC 0001 → 3s → PLC 0002"
 echo "=========================================="
 echo "  背板控制流程完成"
 echo "=========================================="
