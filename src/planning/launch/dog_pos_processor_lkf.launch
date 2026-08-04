@@ -1,0 +1,4 @@
+<launch>
+  <!-- 3. Single LKF + raw increment v/yaw -> /dog_pos_processed_lkf -->
+  <node name="dog_pos_processor_lkf" pkg="planning" type="dog_pos_processor_lkf" output="screen" />
+</launch>

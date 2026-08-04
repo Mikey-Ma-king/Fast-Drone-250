@@ -28,10 +28,7 @@ include_directories(
 
 )
 
-add_dependencies(${catkin_EXPORTED_TARGETS}
-)
-
-
+add_dependencies(${catkin_EXPORTED_TARGETS})
 
 add_executable(planning
   src/traj_server.cpp
@@ -42,10 +39,51 @@ target_link_libraries(planning
   ${catkin_LIBRARIES}
 )
 
+# 1. Cascade KF + R/t (Ours)
+add_executable(dog_pos_processor_sim
+  src/dog_pos_processor_sim.cpp
+  )
+target_link_libraries(dog_pos_processor_sim
+  ${catkin_LIBRARIES}
+)
+
+# 2. Whole joint EKF + R/t (baseline)
+add_executable(dog_pos_processor_kf
+  src/dog_pos_processor_kf.cpp
+  )
+target_link_libraries(dog_pos_processor_kf
+  ${catkin_LIBRARIES}
+)
+
+# 3. Single LKF + raw increment (baseline)
+add_executable(dog_pos_processor_lkf
+  src/dog_pos_processor_lkf_base.cpp
+  )
+target_link_libraries(dog_pos_processor_lkf
+  ${catkin_LIBRARIES}
+)
+
+# 4. Vision-only, fixed R/t (baseline)
+add_executable(dog_pos_processor_vis
+  src/dog_pos_processor_vis_base.cpp
+  )
+target_link_libraries(dog_pos_processor_vis
+  ${catkin_LIBRARIES}
+)
+
+# legacy（与 sim 同源时可不用）
 add_executable(dog_pos_processor
   src/dog_pos_processor.cpp
   )
-
 target_link_libraries(dog_pos_processor
+  ${catkin_LIBRARIES}
+)
+
+# 降落/仿真实验用 traj_server（放宽 mode 切换，无 1->0 / 2->1 回退）
+add_executable(planning_sim
+  src/traj_server_sim.cpp
+  src/callback_sim.cpp
+  )
+target_link_libraries(planning_sim
   ${catkin_LIBRARIES}
 )

@@ -177,7 +177,7 @@ DogPosProcessor::DogPosProcessor()
       acc_filter_gain_(0.3),
       dog_acc_initialized_(false),
       kf_(0.1, 0.01),
-      kf_enabled_(true),
+      kf_enabled_(false),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
       yaw_filter_initialized_(false),
@@ -204,7 +204,7 @@ DogPosProcessor::DogPosProcessor()
     aoa_min_distance_ = 3.0;  // m
 
     // 仿真模式：camera_offset为0
-    simulate_mode_ = false;
+    simulate_mode_ = true;
     
     // 发布者 - 使用Odometry格式
     dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);

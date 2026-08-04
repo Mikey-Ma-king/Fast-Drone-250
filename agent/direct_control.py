@@ -11,7 +11,7 @@ import rospy
 from agent.command import (
     body_delta_to_world_from_snap,
     clamp_body_delta,
-    clamp_world_z,
+    get_command_target_z,
     publish_command_pos,
 )
 from agent.config import SCAN_YAW_DELTA_DEG
@@ -68,7 +68,7 @@ def publish_direct_subtask(
     vins_snapshot_fn: Callable[[], dict[str, float]],
     on_command_published: Optional[Callable[[], None]] = None,
 ) -> bool:
-    """原地旋转或悬停停止。返回是否已发布。"""
+    """原地扫描或悬停停止。返回是否已发布。"""
     if kind not in ("rotate_scan", "stop"):
         return False
 
@@ -86,14 +86,14 @@ def publish_direct_subtask(
         label = f"scan yaw={body['yaw_deg']:+.1f}°"
 
     parsed = clamp_body_delta(body)
-    wx, wy, wz, target_yaw = body_delta_to_world_from_snap(
+    wx, wy, _, target_yaw = body_delta_to_world_from_snap(
         parsed["x_m"],
         parsed["y_m"],
         parsed["z_m"],
         parsed["yaw_deg"],
         vins,
     )
-    wz = clamp_world_z(wz)
+    wz = get_command_target_z(float(vins["z"]))
     publish_command_pos(
         cmd_pub,
         wx=wx,

@@ -13,8 +13,19 @@ import rospy
 
 from agent.config import MAX_LIST_LEN, SUBTASK_MAX_DURATION_S
 
-SubTaskKind = Literal["move", "rotate_scan", "stop"]
-VALID_SUBTASK_KINDS: tuple[SubTaskKind, ...] = ("move", "rotate_scan", "stop")
+SubTaskKind = Literal["move", "turn_left", "turn_right", "rotate_scan", "stop"]
+VALID_SUBTASK_KINDS: tuple[SubTaskKind, ...] = (
+    "move",
+    "turn_left",
+    "turn_right",
+    "rotate_scan",
+    "stop",
+)
+SUBTASK_KINDS_EXECUTOR_DISCRETE: tuple[SubTaskKind, ...] = (
+    "move",
+    "turn_left",
+    "turn_right",
+)
 
 
 @dataclass

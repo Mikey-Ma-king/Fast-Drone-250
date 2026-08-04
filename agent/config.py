@@ -68,12 +68,20 @@ PLANNER_REASONING = False  # True=要求 JSON 含 reasoning 字段（更长、�
 # Executor（下层执行）
 # =============================================================================
 
-EXECUTOR_MODE = "2d"  # "2d"=像素航点+本地几何；"3d"=compact fwd/lat/vert/yaw JSON
+EXECUTOR_MODE = "discrete"  # "2d" | "3d" | "discrete"
 EXECUTOR_PERIOD_S = 0.2  # 两次 Executor 请求最小间隔（秒）
 EXECUTOR_MAX_TOKENS = 128  # Executor 补全 max_tokens
 EXECUTOR_RESPONSE_TIMEOUT_S = 8.0  # 等待 Executor 响应超时（秒）
 EXECUTOR_REASONING = False  # True=要求 JSON 含 reasoning 字段
 EXECUTOR_2D_BBOX = False  # True=2D JSON 含 bbox（仅面板可视化，不参与控制）
+
+# --- 离散动作 Executor（discrete mode）---
+# VLM 返回 FRONT/BACK/UP/DOWN/TURN_LEFT/TURN_RIGHT，本地映射为固定步长/转角
+DISCRETE_STEP_FORWARD_M = 0.60  # FRONT：机体系 +X 前进（米）
+DISCRETE_STEP_BACK_M = 0.30  # BACK：机体系 -X 后退（米）
+DISCRETE_STEP_UP_M = 0.20  # UP：机体系 +Z 上升（米）
+DISCRETE_STEP_DOWN_M = 0.20  # DOWN：机体系 -Z 下降（米）
+DISCRETE_TURN_DEG = 8.0  # TURN_LEFT / TURN_RIGHT 单次转角（度；左正右负）
 
 # =============================================================================
 # 子任务状态与超时
@@ -81,14 +89,14 @@ EXECUTOR_2D_BBOX = False  # True=2D JSON 含 bbox（仅面板可视化，不参�
 
 MAX_LIST_LEN = 10  # 已完成子任务描述列表最大条数（送入 Planner 上下文）
 SUBTASK_MAX_DURATION_S = 10.0  # 单条子任务最长执行时间，超时强制换策略
-SUBTASK_TIMEOUT_FALLBACK_DESC = "Change the strategy."  # 超时写入已完成列表的占位描述
+SUBTASK_TIMEOUT_FALLBACK_DESC = "Update the subtask."  # 超时写入已完成列表的占位描述
 
 # =============================================================================
 # 预览面板、终端统计、录像
 # =============================================================================
 
 SHOW_RGB = False  # True=cv2 弹窗（左图 + 右侧文字面板）
-SAVE_VIDEO = False  # True=把合成面板写入 mp4
+SAVE_VIDEO = True  # True=把合成面板写入 mp4
 VIDEO_SAVE_DIR = AGENT_DIR / "recordings"  # 录像输出目录
 VIDEO_SAVE_FPS = 5.0  # 录像帧率（Hz）；在 rgb 回调里节流写入
 
@@ -104,6 +112,7 @@ STATS_PRINT_PERIOD_S = 4.0  # 终端打印 RGB/VINS/发送计数周期（秒）
 # /command_pos 目标速度（cmd_velocity，供 MPC 跟踪）
 # =============================================================================
 
+ENABLE_COMMAND_POS_VELOCITY = False  # True=对连续目标位姿差分估计速度并写入 twist；False=速度恒为 0
 CMD_V_MAX_XY_MPS = 0.3  # 目标点水平速度模长上限（m/s），建议与 MPC_V_MAX_AGENT 一致
 CMD_V_MAX_Z_MPS = 0.3  # 目标点竖直速度绝对值上限（m/s）
 CMD_V_MIN_STEP_M = 0.005  # 相邻目标位移小于该值则本帧速度置 0（抑制抖动）
@@ -206,6 +215,7 @@ OBS_POINT_HISTORY_FRAMES = 2  # 障碍 3D 点历史帧数，用于多帧融合�
 
 # =============================================================================
 # 非 move 子任务直接控制（direct_control：rotate_scan / stop）
+# move / turn_left / turn_right 走 discrete executor
 # =============================================================================
 
 SCAN_YAW_DELTA_DEG = 8.0  # rotate_scan 单次原地偏航增量（度）；右转为负、与 compact yaw 约定一致

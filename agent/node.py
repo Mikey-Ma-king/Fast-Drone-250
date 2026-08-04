@@ -66,9 +66,11 @@ from agent.config import (
     VLLM_HTTP_TIMEOUT_S,
     VLLM_MODEL,
 )
+from agent.command import reset_command_target_z
 from agent.direct_control import get_direct_control_state, publish_direct_subtask
 from agent.executor import Executor
 from agent.executor_2d import Executor2D
+from agent.executor_discrete import ExecutorDiscrete
 from agent.overlay import PanelVideoWriter, make_video_save_path, render_agent_panel_bgr
 from agent.obstacle_avoidance import get_obstacle_avoidance, init_obstacle_avoidance
 from agent.planner import Planner
@@ -99,7 +101,7 @@ vins_yaw = 0.0
 
 task_state: Optional[TaskState] = None
 planner: Optional[Planner] = None
-executor: Optional[Union[Executor, Executor2D]] = None
+executor: Optional[Union[Executor, Executor2D, ExecutorDiscrete]] = None
 cmd_pub: Optional[rospy.Publisher] = None
 mode_pub: Optional[rospy.Publisher] = None
 panel_video_writer: Optional[PanelVideoWriter] = None
@@ -561,9 +563,9 @@ def parse_cli_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--executor-mode",
-        choices=("3d", "2d"),
+        choices=("3d", "2d", "discrete"),
         default=EXECUTOR_MODE,
-        help="executor output format: 3d=compact body delta; 2d=pixel waypoint+distance_m",
+        help="executor output: 3d=compact body delta; 2d=pixel waypoint; discrete=FRONT/BACK/...",
     )
     if argv is None:
         argv = sys.argv[1:]
@@ -578,11 +580,12 @@ def main(
     executor_mode: str = EXECUTOR_MODE,
 ) -> None:
     executor_mode = str(executor_mode).lower()
-    if executor_mode not in ("3d", "2d"):
+    if executor_mode not in ("3d", "2d", "discrete"):
         raise ValueError(f"invalid executor_mode: {executor_mode!r}")
     global vlm_client, vlm_model, asyncio_loop
     global task_state, planner, executor, cmd_pub, mode_pub, panel_video_writer
     global _stats_plan_send_base, _stats_exec_send_base
+    reset_command_target_z(None)
     rospy.init_node("hierarchical_vlm_agent", anonymous=False)
     init_intrinsics(
         CameraIntrinsics(
@@ -655,6 +658,16 @@ def main(
             vins_snapshot_fn=vins_snapshot,
             on_command_published=None,
             with_bbox=executor_2d_bbox,
+        )
+    elif executor_mode == "discrete":
+        executor = ExecutorDiscrete(
+            client=vlm_client,
+            model=vlm_model,
+            task_state=task_state,
+            cmd_pub=cmd_pub,
+            vins_snapshot_fn=vins_snapshot,
+            on_command_published=None,
+            with_reasoning=executor_reasoning,
         )
     else:
         executor = Executor(

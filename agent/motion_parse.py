@@ -258,6 +258,10 @@ def _normalize_subtask_kind(raw: str) -> Optional[SubTaskKind]:
         "scan_search": "rotate_scan",
         "rotate_scan": "rotate_scan",
         "scan_and_search": "rotate_scan",
+        "turn_left": "turn_left",
+        "left": "turn_left",
+        "turn_right": "turn_right",
+        "right": "turn_right",
         "hold": "stop",
         "halt": "stop",
         "stop": "stop",
@@ -289,10 +293,19 @@ def _extract_planner_type(
     return None
 
 
-def _extract_move_subtask_text(
+_SUBTASK_DETAIL_DEFAULTS: dict[SubTaskKind, str] = {
+    "move": "",
+    "turn_left": "turn left in place",
+    "turn_right": "turn right in place",
+    "rotate_scan": "rotate in place to search for the target",
+    "stop": "hover and hold position",
+}
+
+
+def _extract_planner_detail_text(
     root: Optional[dict[str, Any]], raw_text: str,
 ) -> str:
-    """move 的 detail：字符串原样返回；dict 兼容 action/object 或 text 字段。"""
+    """u=1 时 detail：字符串原样返回；dict 兼容 action/object 或 text 字段。"""
     if root:
         det = root.get("detail")
         if isinstance(det, str) and det.strip():
@@ -311,6 +324,27 @@ def _extract_move_subtask_text(
             return legacy
     m = re.search(r'"detail"\s*:\s*"([^"]+)"', raw_text)
     return m.group(1).strip() if m else ""
+
+
+def _extract_move_subtask_text(
+    root: Optional[dict[str, Any]], raw_text: str,
+) -> str:
+    return _extract_planner_detail_text(root, raw_text)
+
+
+def _subtask_text_for_kind(
+    kind: SubTaskKind,
+    root: Optional[dict[str, Any]],
+    raw_text: str,
+    *,
+    legacy_sub: str = "",
+) -> str:
+    detail = _extract_planner_detail_text(root, raw_text)
+    if detail:
+        return detail
+    if kind == "move" and legacy_sub:
+        return legacy_sub
+    return _SUBTASK_DETAIL_DEFAULTS.get(kind, "")
 
 
 def _extract_move_detail(
@@ -444,12 +478,7 @@ def parse_planner_vlm_output(
     legacy_sub = ""
     if u == 1:
         kind, action, obj, legacy_sub = _extract_planner_subtask(root, raw_text)
-        if kind == "move":
-            subtask = _extract_move_subtask_text(root, raw_text) or legacy_sub
-        elif kind == "rotate_scan":
-            subtask = "rotate scan"
-        else:
-            subtask = "stop"
+        subtask = _subtask_text_for_kind(kind, root, raw_text, legacy_sub=legacy_sub)
 
     if root and with_reasoning:
         reasoning = str(root.get("reasoning", root.get("reason", ""))).strip()
@@ -457,12 +486,8 @@ def parse_planner_vlm_output(
 
     if u == 1 and not subtask:
         kind, action, obj, legacy_sub = _extract_planner_subtask(None, raw_text)
-        if kind == "move":
-            subtask = _extract_move_subtask_text(None, raw_text) or legacy_sub
-        elif kind == "rotate_scan":
-            subtask = "rotate scan"
-        else:
-            subtask = "stop"
+        subtask = _subtask_text_for_kind(kind, root, raw_text, legacy_sub=legacy_sub)
+
     if with_reasoning and not reasoning:
         m = re.search(r'"(?:reasoning|reason)"\s*:\s*"([^"]+)"', raw_text)
         if m:

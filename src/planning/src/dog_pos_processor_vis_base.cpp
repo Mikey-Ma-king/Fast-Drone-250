@@ -3,6 +3,12 @@
 #include <Eigen/Dense>
 #include <cmath>
 
+namespace {
+constexpr double kTimerDt = 0.05;
+constexpr double kOutputProcessNoise = 0.01;
+constexpr double kOutputMeasNoise = 0.1;
+}  // namespace
+
 /*
  * Dog Position Processor (Vision-only Base)
  * 仅接收 target_ekf_odom 视觉信息，经 LKF 滤波后发布 dog_pos_processed
@@ -21,12 +27,13 @@ KalmanFilter::KalmanFilter(double process_noise, double measurement_noise)
 
 void KalmanFilter::predict(double dt) {
     if (!initialized_) return;
+    if (dt <= 0.0) dt = kTimerDt;
     Eigen::MatrixXd F = F_base_;
     F(0, 3) = dt;
     F(1, 4) = dt;
     F(2, 5) = dt;
     state_ = F * state_;
-    covariance_ = F * covariance_ * F.transpose() + Q_;
+    covariance_ = F * covariance_ * F.transpose() + Q_ * (dt / kTimerDt);
 }
 
 void KalmanFilter::update(const Eigen::VectorXd& measurement) {
@@ -130,7 +137,7 @@ DogPosProcessor::DogPosProcessor()
       last_dog_vel_time_(0.0),
       acc_filter_gain_(0.3),
       dog_acc_initialized_(false),
-      kf_(0.1, 0.01),
+      kf_(kOutputProcessNoise, kOutputMeasNoise),
       kf_enabled_(true),
       yaw_filter_gain_kf_(0.3),
       filtered_yaw_(0.0),
@@ -139,7 +146,7 @@ DogPosProcessor::DogPosProcessor()
       trigger_received_(false),
       offset_history_max_size_(10) {
 
-    dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);
+    dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed_vis", 10);
     aoa_dog_pos_debug_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_aoa_debug", 10);
 
     target_sub_ = nh_.subscribe("/target_ekf_odom", 10, &DogPosProcessor::targetCallback, this);
@@ -147,7 +154,7 @@ DogPosProcessor::DogPosProcessor()
     timer_ = nh_.createTimer(ros::Duration(0.05), &DogPosProcessor::processCallback, this);
     status_timer_ = nh_.createTimer(ros::Duration(0.1), &DogPosProcessor::statusCheckCallback, this);
 
-    ROS_INFO("Dog Position Processor (vis_base): subscribe /target_ekf_odom -> LKF -> /dog_pos_processed");
+    ROS_INFO("Dog Position Processor (vis_base): target_ekf_odom only -> /dog_pos_processed_vis");
 }
 
 void DogPosProcessor::targetCallback(const nav_msgs::Odometry::ConstPtr& msg) {
@@ -270,7 +277,7 @@ void DogPosProcessor::spin() {
 }
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "dog_pos_processor");
+    ros::init(argc, argv, "dog_pos_processor_vis");
     DogPosProcessor processor;
     processor.spin();
     return 0;
