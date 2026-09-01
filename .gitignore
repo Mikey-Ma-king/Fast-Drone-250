@@ -16,7 +16,6 @@ __pycache__/
 *.pyc
 *.pyo
 CLAUDE.md
-hc-14.py
-hc-14.sh
 gos_send+.sh
 gos_send-.sh
+hc_14/
