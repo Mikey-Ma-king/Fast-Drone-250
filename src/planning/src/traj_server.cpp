@@ -288,7 +288,7 @@ double jerk_feedforward_sat_threshold_y = 0.3;
 double jerk_feedforward_sat_value_y = 1.0;
 
 double z_p = 0.1;
-double z_i = 0.0;
+double z_i = 0.1;
 double z_d = 0.0;
 double z_d_max = 0.1;
 double integral_limit_z = 0.1;
@@ -1692,9 +1692,6 @@ int main(int argc, char **argv) {
   // 订阅处理后的dog_pos话题
   ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos_processed", 10, dog_pos_callback);
   ros::Subscriber command_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/command_pos", 10, command_pos_callback);
-
-  // 订阅坐标系对齐后的狗位姿(来自 dog_pos_processor)
-  ros::Subscriber dog_pos_sub_ = nh.subscribe<nav_msgs::Odometry>("/dog_pos_processed", 10, dog_pos_callback);
 
   // ===== 发布器注册 =====
   pos_cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd", 50);

@@ -5,6 +5,7 @@
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float64.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PointStamped.h>
 #include <quadrotor_msgs/TakeoffLand.h>
 #include <Eigen/Dense>
 #include <cmath>
@@ -66,6 +67,8 @@ private:
     // 发布者
     ros::Publisher dog_pos_pub_;
     ros::Publisher aoa_dog_pos_debug_pub_;  // Debug发布者 - 发布AOA计算得到的dog位置
+    ros::Publisher pos_offset_pub_;         // 发布 pos_offset（与 dog_pos_processed 同步）
+    ros::Publisher yaw_offset_pub_;         // 发布 yaw_offset（与 dog_pos_processed 同步）
     
     // 订阅者
     ros::Subscriber raw_dog_pos_sub_;

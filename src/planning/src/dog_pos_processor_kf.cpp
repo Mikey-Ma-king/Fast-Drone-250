@@ -3,6 +3,7 @@
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float64.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PointStamped.h>
 #include <quadrotor_msgs/TakeoffLand.h>
 #include <Eigen/Dense>
 #include <chrono>
@@ -309,6 +310,8 @@ public:
 
         dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed_kf", 10);
         aoa_debug_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_aoa_debug_kf", 10);
+        pos_offset_pub_ = nh_.advertise<geometry_msgs::PointStamped>("/dog_pos_offset_kf", 10);
+        yaw_offset_pub_ = nh_.advertise<std_msgs::Float64>("/dog_yaw_offset_kf", 10);
 
         raw_dog_pos_sub_ = nh_.subscribe("/dog_pos", 10, &DogPosProcessorKF::rawDogPosCallback, this);
         target_sub_ = nh_.subscribe("/target_ekf_odom", 10, &DogPosProcessorKF::targetCallback, this);
@@ -618,6 +621,19 @@ private:
         msg.twist.twist.angular.y = dog_yaw_rate_;
         msg.twist.twist.angular.z = 0.0;
         dog_pos_pub_.publish(msg);
+
+        // 同步发布 EKF 维护的结构变换外参
+        const Eigen::Vector3d pos_off = ekf_.posOffset();
+        geometry_msgs::PointStamped pos_offset_msg;
+        pos_offset_msg.header = msg.header;
+        pos_offset_msg.point.x = pos_off.x();
+        pos_offset_msg.point.y = pos_off.y();
+        pos_offset_msg.point.z = pos_off.z();
+        pos_offset_pub_.publish(pos_offset_msg);
+
+        std_msgs::Float64 yaw_offset_msg;
+        yaw_offset_msg.data = ekf_.yawOffset();
+        yaw_offset_pub_.publish(yaw_offset_msg);
     }
 
     ros::NodeHandle nh_;
@@ -625,6 +641,8 @@ private:
 
     ros::Publisher dog_pos_pub_;
     ros::Publisher aoa_debug_pub_;
+    ros::Publisher pos_offset_pub_;
+    ros::Publisher yaw_offset_pub_;
     ros::Subscriber raw_dog_pos_sub_;
     ros::Subscriber target_sub_;
     ros::Subscriber vins_sub_;

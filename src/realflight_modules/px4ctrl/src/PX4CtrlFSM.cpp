@@ -700,12 +700,23 @@ bool PX4CtrlFSM::toggle_arm_disarm(bool arm)
 	arm_cmd.request.value = arm;
 	if (!(arming_client_srv.call(arm_cmd) && arm_cmd.response.success))
 	{
-		if (arm)
-			ROS_ERROR("ARM rejected by PX4!");
-		else
-			ROS_ERROR("DISARM rejected by PX4!");
-
-		return false;
+		// 普通 arm/disarm 被拒时，强制解锁/上锁（MAV_CMD_COMPONENT_ARM_DISARM + magic 21196）
+		// 21196 可跳过起飞前检查（force arm）或空中强制停桨（force disarm）
+		const char *action = arm ? "ARM" : "DISARM";
+		ROS_WARN("%s rejected by PX4, trying FORCE %s...", action, action);
+		mavros_msgs::CommandLong force_arm_disarm;
+		force_arm_disarm.request.broadcast = false;
+		force_arm_disarm.request.command = 400;	   // MAV_CMD_COMPONENT_ARM_DISARM
+		force_arm_disarm.request.param1 = arm ? 1.0 : 0.0; // 1 = arm, 0 = disarm
+		force_arm_disarm.request.param2 = 21196;   // force arm/disarm magic number
+		force_arm_disarm.request.confirmation = true;
+		if (!(reboot_FCU_srv.call(force_arm_disarm) && force_arm_disarm.response.success))
+		{
+			ROS_ERROR("FORCE %s rejected by PX4!", action);
+			return false;
+		}
+		ROS_WARN("FORCE %s sent successfully!", action);
+		return true;
 	}
 
 	return true;

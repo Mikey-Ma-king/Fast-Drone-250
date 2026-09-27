@@ -309,6 +309,8 @@ DogPosProcessor::DogPosProcessor()
     
     // 发布者 - 使用Odometry格式
     dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);
+    pos_offset_pub_ = nh_.advertise<geometry_msgs::PointStamped>("/dog_pos_offset", 10);
+    yaw_offset_pub_ = nh_.advertise<std_msgs::Float64>("/dog_yaw_offset", 10);
     
     // Debug发布者 - 发布AOA计算得到的dog位置
     aoa_dog_pos_debug_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_aoa_debug", 10);
@@ -1096,6 +1098,19 @@ void DogPosProcessor::publishProcessedDogPos() {
     msg.twist.twist.angular.z = 0.0;
 
     dog_pos_pub_.publish(msg);
+
+    // 同步发布维护的结构变换外参
+    geometry_msgs::PointStamped pos_offset_msg;
+    pos_offset_msg.header = msg.header;
+    pos_offset_msg.point.x = pos_offset_.x();
+    pos_offset_msg.point.y = pos_offset_.y();
+    pos_offset_msg.point.z = pos_offset_.z();
+    pos_offset_pub_.publish(pos_offset_msg);
+
+    std_msgs::Float64 yaw_offset_msg;
+    yaw_offset_msg.data = yaw_offset_;
+    yaw_offset_pub_.publish(yaw_offset_msg);
+
     logIterMsThrottled("dog_pos_processor [raw]", iter_t0);
 }
 

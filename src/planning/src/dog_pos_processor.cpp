@@ -32,13 +32,26 @@
  *
  *   1. 减去位置偏移:  corrected_pos = raw_pos - pos_offset   (狗系下偏移校正)
  *   2. 旋转 yaw 偏移:  rotated = R(-yaw_offset) * corrected_pos
+ *   这里的R是  [cos −sin; sin cos]，来源如下：
+ *
+ * 任何向量都能写成极坐标：v = (r·cosφ, r·sinφ)，其中 φ 是箭头和 +x 轴的夹角。
+ * 逆时针转 θ 后新夹角是 φ+θ，长度 r 不变：
+ *
+ * x' = r·cos(φ+θ) = r(cosφ·cosθ − sinφ·sinθ) = x·cosθ − y·sinθ
+ * y' = r·sin(φ+θ) = r(sinφ·cosθ + cosφ·sinθ) = x·sinθ + y·cosθ
+ * 区别于坐标系变换的旋转矩阵 [cos sin; −sin cos]，这里是向量的旋转矩阵
  *
  *   其中:
- *   - yaw_offset = raw_dog_yaw - target_dog_yaw (狗航向和视觉航向的差)
+ *   - yaw_offset = raw_dog_yaw - target_dog_yaw (狗在狗系航向和狗在视觉/世界坐标系航向的差，最开始用vins是因为起飞时无人机在狗正上方，视觉还没有到位)
  *   - pos_offset = raw_dog_pos - R(yaw_offset) * vins_pos (平移偏差)
+ *   - pos_offset 是世界系原点在狗系下的坐标，即"狗系原点 → 世界系原点"这支箭头用狗系的尺子量出的读数
+ *   - yaw_offset 是世界系到狗系的旋转角度
  *
  *   最终发布的世界系位置是:
  *     dog_pos_world = R(-yaw_offset) * (raw_pos - pos_offset)
+ * - raw_pos：狗自报的位置，是从狗系原点（基站）出发量到狗的箭头
+ * - pos_offset：世界系原点在狗系下的读数（= 狗原点 → 世界原点的箭头，狗系表示）
+ * - 相减后得到的箭头 = 从世界原点出发指向狗，还是在狗系下；接着需要旋转到世界系下，旋转角度是 -yaw_offset
  *
  * 【AOA 辅助修正原理】(详见 processCallback 中的几何推导)
  *   当 UWB AOA 传感器可用时,利用 "yaw 平面 ∩ 高度平面 = 直线" 的约束,
@@ -200,7 +213,7 @@ static const double default_dt = -1.0;  // 默认时间间隔标记(-1 表示自
  *   yaw_exceed_threshold_ = 45°   → yaw offset 发散判据
  *   pos_stable_threshold_ = 5cm   → pos offset 收敛判据
  *   pos_exceed_threshold_ = 30cm  → pos offset 发散判据
- *   camera_offset_ = 0.36m        → 相机安装位置到目标几何中心的前馈补偿距离
+ *   camera_offset_ = 0.36s        → 视觉链路总延迟(秒), 用于将视觉位置外推到当前时刻
  *   aoa_min_distance_ = 3.0m      → AOA 最小有效距离(太近时角度噪声大)
  */
 DogPosProcessor::DogPosProcessor()
@@ -287,7 +300,7 @@ DogPosProcessor::DogPosProcessor()
     aoa_pos_filter_gain_ = 0.05;                        // AOA 辅助修正增益(比视觉小,更保守)
     aoa_pos_step_limit_ = 0.02;                         // AOA 单次迭代步长上限(防止突变)
 
-    camera_offset_ = 0.36;  // 相机安装偏移: 从相机光心到目标几何中心的水平距离(m)
+    camera_offset_ = 0.36;  // 视觉链路总延迟(秒): 拍照→ArUco检测→EKF→传输, 用于把视觉位置外推到当前时刻
 
     aoa_min_distance_ = 3.0;  // AOA 最小有效距离(太近时角度噪声大)
 
@@ -296,6 +309,9 @@ DogPosProcessor::DogPosProcessor()
     // ===== ROS 发布者/订阅者注册 =====
     dog_pos_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_processed", 10);
     aoa_dog_pos_debug_pub_ = nh_.advertise<nav_msgs::Odometry>("/dog_pos_aoa_debug", 10);
+    // 外参 offset：与 dog_pos_processed 同步发布
+    pos_offset_pub_ = nh_.advertise<geometry_msgs::PointStamped>("/dog_pos_offset", 10);
+    yaw_offset_pub_ = nh_.advertise<std_msgs::Float64>("/dog_yaw_offset", 10);
 
     raw_dog_pos_sub_ = nh_.subscribe("/dog_pos", 10, &DogPosProcessor::rawDogPosCallback, this);
     target_sub_ = nh_.subscribe("/target_ekf_odom", 10, &DogPosProcessor::targetCallback, this);
@@ -516,7 +532,8 @@ void DogPosProcessor::targetCallback(const nav_msgs::Odometry::ConstPtr& msg) {
  *
  * 从四元数计算:
  *   - vins_yaw_: 无人机当前航向角
- *   - R_wb_: 世界系到机体系的旋转矩阵 (用于 AOA 坐标变换)
+ *   - R_wb_: 机体系→世界系的旋转矩阵 (用于 AOA 坐标变换), 用法: v_world = R_wb_ * v_body
+ *            (ROS 姿态四元数的 toRotationMatrix() 即 body→world)
  *   - vins_pos_: 无人机在世界系下的位置
  */
 void DogPosProcessor::vinsCallback(const nav_msgs::Odometry::ConstPtr& msg) {
@@ -668,7 +685,7 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
  *
  * 【阶段 2: Yaw offset 迭代维护】
  *   当视觉检测(target)和狗通信数据(raw)同时可用时:
- *     current_yaw_offset = raw_dog_yaw - target_dog_yaw
+ *     current_yaw_offset = raw_dog_yaw - target_dog_yaw(最开始用的是vins_yaw)
  *     yaw_offset_diff = current_yaw_offset - yaw_offset (归一化到[-π,π])
  *     yaw_offset += yaw_filter_gain * yaw_offset_diff   (一阶低通)
  *
@@ -677,8 +694,14 @@ void DogPosProcessor::statusCheckCallback(const ros::TimerEvent& event) {
  *
  * 【阶段 3: Pos offset 迭代维护】
  *   当 yaw ready 后,用旋转后的 target 位置和 raw 位置的差来更新 pos_offset:
- *     raw_dog_pos - R(yaw_offset) * (target_pos + camera_offset * vel)
- *     pos_offset += pos_filter_gain * (current_pos_offset - pos_offset)
+ *     raw_dog_pos - R(yaw_offset) * (target_pos + camera_offset*vel + 0.5*camera_offset²*acc)
+ *     其中 raw_dog_pos 是狗自报的狗系位置, target_pos 是视觉检测的狗的世界系位置(相机延迟之前的世界系位置)
+ *     (来源链: 机载相机拍 ArUco 标签 → read.cpp 检测+EKF+Bezier 预测 → /target_ekf_odom → targetCallback)
+ *     target_pos + camera_offset*vel 是泰勒展开式的位置外推(补偿视觉延迟 τ):
+ *       f(t) = f(t₀) + f'(t₀)·(t−t₀) + ½·f''(t₀)·(t−t₀)² + O((t−t₀)³)
+ *       取 t=现在, t₀=t−τ, f'=v(速度), f''=a(加速度):
+ *       p(现在) = p(t−τ) + v(t−τ)·τ + ½·a(t−τ)·τ² + O(τ³)
+ *       代码截断到二阶, 并用当前滤波后的 v、a 近似 τ 秒前的值 *     pos_offset += pos_filter_gain * (current_pos_offset - pos_offset)
  *
  *   收敛判据: |pos_offset_diff| < 5cm → precise_pos_offset_ready
  *   发散判据: |pos_offset_diff| > 30cm 连续 5 次 → not ready
@@ -792,10 +815,9 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
                 raw_dog_pos_->pose.pose.position.z
             );
 
-            // 前馈补偿: target_dog_pos 加上 camera_offset * velocity 的提前量
-            // 物理含义: 相机安装在飞机上,拍照点到目标几何中心有 camera_offset 的距离,
-            //          目标在运动时需要考虑这段时间内的位移
-            // 加上了加速度的二次项: 0.5 * camera_offset² * acc (匀加速运动补偿)
+            // 前馈补偿(视觉延迟外推): target_dog_pos 是 τ 秒前拍到的位置,
+            // 用当前速度/加速度外推到当前时刻: p(now) ≈ p(t-τ) + τ·v + ½·τ²·a
+            // camera_offset_ = 0.36 是视觉链路总延迟(秒): 拍照→ArUco检测→EKF→传输
             Eigen::Vector3d target_dog_pos_with_ff(
                 target_dog_pos_.x() + camera_offset_ * final_dog_vel_.x()
                     + 0.5 * camera_offset_ * camera_offset_ * final_dog_acc_.x(),
@@ -866,12 +888,18 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
     //   1. Yaw offset 已 ready
     //   2. VINS 位姿可用
     //   3. AOA 传感器可用 (UWB 单锚点距离+角度)
-    // AOA 会给一个bearing角度和一个斜距，分别表示狗在飞机水平面的方向和飞机到狗的直线距离
+    // AOA 会给一个bearing角度和一个斜距，分别表示狗在机体系水平面内的方位和飞机到狗的直线距离
     //   4. 飞机朝向与狗的夹角在 ±45° 内 (AOA 传感器视场角限制)
+    //
+    // 机体系 vs 世界系:
+    //   世界系: 原点固定在 VINS 初始化点, 坐标轴不动(z 朝上, 重力对齐)
+    //   机体系: 原点在飞机本体, 坐标轴随飞机转(x 机头正前, y 左, z 上)
+    //   关系: 世界系坐标 = R_wb · 机体系坐标 + vins_pos
+    //   AOA 方位角是机体系下的(以机头为 0°), 几何求交在世界系做, 必须经 R_wb 旋转
     //
     // 几何问题定义:
     //   已知:
-    //     - 飞机在世界系中的姿态 R_wb
+    //     - 飞机在世界系中的姿态旋转矩阵 R_wb (机体系→世界系)
     //     - 飞机为坐标系原点
     //     - 目标相对飞机的高度差 Δz
     //     - 目标相对飞机的水平距离 aoa_distance_horizontal
@@ -882,14 +910,15 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
     // 求解策略: yaw 平面 ∩ 高度平面 = 直线 → 沿直线走水平距离
     if (precise_yaw_offset_ready_ && vins_received_ && aoa_received_) {
         Eigen::Vector3d dog_vec = final_dog_pos_ - vins_pos_;
-        //这里是使用上一帧计算出来的狗在世界系下的位置，和VIN上的朝向做合理性校验
+        // 用上一帧发布的狗世界位置与 VINS 机头朝向做合理性校验(±45° 视场角)
         double heading_to_dog = std::atan2(dog_vec.y(), dog_vec.x());//反三角函数求角度
         double heading_diff = normalizeAngle(heading_to_dog - vins_yaw_);
         if (std::abs(heading_diff) > M_PI / 4.0) {  // 45 度
             return;
         }
 
-        // 用 flow_z(光流高度)修正高度差
+        // 高度差: 上一帧发布的狗世界 z − 飞机 z
+        // (flow_z_ 光流高度只存未用, 实际用的是 final_dog_pos_.z())
         double height_diff = final_dog_pos_.z() - vins_pos_.z();
 
         // 距离约束: AOA 斜距必须 ≥ 高度差(否则无解)
@@ -907,7 +936,7 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         // ===== 几何求解: 单距离+单角度 → 世界系 3D 位置 =====
 
         // Step 0: 基础向量
-        Eigen::Vector3d ez(0.0, 0.0, 1.0);  // 世界系 z 轴
+        Eigen::Vector3d ez(0.0, 0.0, 1.0);  // ez是世界系 z 轴
 
         // 狗在机体系 yaw 平面内的 bearing 方向(水平面内)
         Eigen::Vector3d bearing_b(
@@ -917,23 +946,27 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         );
 
         // Step 1: 构造 yaw 平面的法向
-        // yaw 平面 = 经过原点、包含 bearing_b + 机体系 z 轴的平面
+        // yaw 平面 = 经过原点、包含 bearing_b + 机体系 z 轴(机体系z轴只有在飞机水平时才和世界系z轴重合)的平面
+        // 在机体系下该平面竖直(含机体系 z 轴); 在世界系下仅当飞机水平时才竖直,
+        // 飞机有俯仰/横滚时该平面倾斜, 但"可能倾斜的平面 ∩ 世界水平面"求交依然成立
         // 法向 = bearing × ez (在机体系下)
         Eigen::Vector3d n_b = bearing_b.cross(ez);
 
-        //由机体系转到世界系：R_wb*n_b
+        // 由机体系转到世界系: n_w = R_wb * n_b
+        // R_wb 是机体系→世界系旋转(vinsCallback 旧注释方向写反, 已修正)
         Eigen::Vector3d n_w = R_wb_ * n_b;
         n_w.normalize();
 
         // Step 2: yaw 平面与水平面(z=const)的交线
-        // 交线方向 = 两个平面法向的叉乘: d ∝ n × ez
+        // 交线方向 = 两个平面法向的叉乘(交线同时在两个平面内, 方向必须垂直于两个法向)
+        // 取负号: -n_w×ez = ez×n_w; 飞机水平时由恒等式 ez×(bearing×ez)=bearing
+        // 可知 d_w 精确等于世界系的 bearing 方向(飞机倾斜时 d_w 仍是真实交线方向,
+        // 但不再等于 bearing 直接旋转), 这样后面 t 取正根就是狗那一侧的唯一物理解
         Eigen::Vector3d d_w = -n_w.cross(ez);
 
         if (d_w.norm() < 1e-6) {
-            return;  // yaw 平面平行于水平面(退化,无唯一解)
-            //这种情况只有在飞机侧翻90度的情况出现
+            return;  // yaw 平面与水平面平行(退化,无唯一交线), 飞机侧翻约90°(机体系z轴水平)时出现
         }
-        //
 
         Eigen::Vector3d d_hat = d_w.normalized();
 
@@ -941,12 +974,15 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         // 目标: 在交线上找到距离原点最近的点
         //
         // 思路:
-        //   - 从 p_start = Δz·ez 出发(满足高度约束)
+        //   - 从 p_start = Δz·ez 出发(满足高度约束)，Δz是背板距离飞机的垂直距离
         //   - 沿 n_h 方向修正,使 p0 落在 yaw 平面内
         //   - n_h = n_w - (n_w·ez)·ez = yaw 平面法向在水平面的投影
-        //
-        // 闭式解: p0 = Δz·ez - α·n_h, α = (n_z·Δz) / |n_h|²
-
+        //   - n_z = n_w·ez，是yaw平面法向的z分量的长度
+        // 闭式解: p0 = Δz·ez - α·n_h, α = (n_z*Δz) / |n_h|²
+        // n_z*Δz也可以写成n_w·p_start,α下面的这个/ |n_h|是为了得到n_h的单位向量
+        // 注意：n_w已经归一化，但是n_b,n_z和n_h没有归一化，所以要除以n_h的平方模长
+        //还有一个|n_h|则是因为：1/|n_h|=1/cos(theta),theta是n_w和水平方向的夹角；pstart沿水平n_h方向平移的距离是
+        
         double n_z = n_w.dot(ez);  // yaw 平面法向的 z 分量
 
         Eigen::Vector3d n_h = n_w - n_z * ez;  // 法向的水平分量
@@ -972,6 +1008,11 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
             return;  // 水平圆与交线无交点
         }
 
+        // 保证交线方向朝向当前估计的狗位置
+        if (d_hat.dot(dog_vec) < 0.0) {
+            d_hat = -d_hat;
+        }
+
         double t = std::sqrt(inside);  // 沿 bearing 正方向的唯一物理解
 
         // 目标相对飞机的位置(世界系)
@@ -980,13 +1021,18 @@ void DogPosProcessor::processCallback(const ros::TimerEvent& event) {
         // Step 6: 转为世界系绝对坐标(目标相对于世界系原点）
         Eigen::Vector3d aoa_pos_world = vins_pos_ + target_rel;
 
-        // 将 AOA 估计位置旋转到狗坐标系(使用 yaw_offset)
-        //Vins所在的系就是世界系，不是机体系
+        // 将"飞机→狗"的相对向量(世界系)旋转到狗系轴: R(yaw_offset)·target_rel
+        // (VINS 所在的系就是世界系, 不是机体系)
+        //
+        // 已知偏差: 严格按对齐式 pos_offset = raw − R(θ)·狗世界位置, 这里应旋转
+        // 完整世界坐标 R(θ)·aoa_pos_world; 当前写法少了平移项, 等价于
+        // current_pos_offset = pos_offset + R(θ)·vins_pos —— 飞机离世界原点越远
+        // 偏差越大(被 2cm/步限幅压制, 与阶段3视觉维护竞争), 待实机验证后再决定是否修正
         double cos_yaw = std::cos(yaw_offset_);
         double sin_yaw = std::sin(yaw_offset_);
-        double rotated_aoa_x = cos_yaw * (aoa_pos_world.x() - vins_pos_.x()) - sin_yaw * (aoa_pos_world.y() - vins_pos_.y());
-        double rotated_aoa_y = sin_yaw * (aoa_pos_world.x() - vins_pos_.x()) + cos_yaw * (aoa_pos_world.y() - vins_pos_.y());
-        Eigen::Vector3d rotated_aoa_pos(rotated_aoa_x, rotated_aoa_y, final_dog_pos_.z());
+        double rotated_aoa_x = cos_yaw * aoa_pos_world.x() - sin_yaw * aoa_pos_world.y();
+        double rotated_aoa_y = sin_yaw * aoa_pos_world.x() + cos_yaw * aoa_pos_world.y();
+        Eigen::Vector3d rotated_aoa_pos(rotated_aoa_x, rotated_aoa_y, aoa_pos_world.z());
 
         // 与 raw_dog_pos 比较,计算 pos_offset 修正量
         Eigen::Vector3d raw_dog_pos(
@@ -1189,6 +1235,19 @@ void DogPosProcessor::publishProcessedDogPos() {
     msg.twist.twist.angular.z = 0.0;
 
     dog_pos_pub_.publish(msg);
+
+        // 同步发布维护的结构变换外参
+    geometry_msgs::PointStamped pos_offset_msg;
+    pos_offset_msg.header = msg.header;
+    pos_offset_msg.point.x = pos_offset_.x();
+    pos_offset_msg.point.y = pos_offset_.y();
+    pos_offset_msg.point.z = pos_offset_.z();
+    pos_offset_pub_.publish(pos_offset_msg);
+
+    std_msgs::Float64 yaw_offset_msg;
+    yaw_offset_msg.data = yaw_offset_;
+    yaw_offset_pub_.publish(yaw_offset_msg);
+    
 }
 
 
