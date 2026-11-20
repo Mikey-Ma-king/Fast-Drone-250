@@ -15,6 +15,7 @@
   <depend>plan_env</depend>
   <depend>traj_opt</depend>
   <depend>decomp_ros_utils</depend>
+  <exec_depend>quaddock_ours</exec_depend>
   
 
   <export>

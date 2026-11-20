@@ -37,7 +37,8 @@
 
   <arg name="fisheye_fps"         default="15"/>
   <arg name="depth_fps"           default="15"/>
-  <arg name="infra_fps"           default="60"/>
+  <!-- Stereo input for SchurVINS; read keeps its bounded 200 Hz output. -->
+  <arg name="infra_fps"           default="30"/>
   <arg name="color_fps"           default="15"/>
   <arg name="gyro_fps"            default="400"/>
   

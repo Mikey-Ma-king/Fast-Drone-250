@@ -1,0 +1,15 @@
+﻿运行目录,纳入压缩包,分类,原始日志目录,bag数量,bag总字节,记录总时长秒,说明
+20261120_155253_vicon_96d4ac,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_155253_vicon_96d4ac,3,309355890,657.818,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_162105_vicon_c8ed88,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_162105_vicon_c8ed88,1,14311435,29.07,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_162332_vicon_c9a5e5,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_162332_vicon_c9a5e5,1,79764297,124.273,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_163206_vicon_8e8967,否,excluded_unfinalized_recording,/home/pc/perching_bag/20261120_163206_vicon_8e8967,0,0,0,录制未正常关闭；原 .bag.active 不作修改。副本恢复检查另记，不按失败降落计数。
+20261120_164006_vicon_1200ba,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_164006_vicon_1200ba,2,252763706,500.375,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_165158_vicon_a72a04,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_165158_vicon_a72a04,1,105612893,207.462,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_170324_vicon_1dd21f,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_170324_vicon_1dd21f,1,48150074,85.14,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_171421_vicon_a58b5b,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_171421_vicon_a58b5b,1,57184289,101.964,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_171624_vicon_a554af,否,excluded_known_failed_landing,/home/pc/perching_bag/20261120_171624_vicon_a554af,1,57684812,85.031,此前已确认未对准平台的失败降落（含里程计中断）；自动停桨不能当作成功证据。
+20261120_175322_vicon_18ffbe,否,excluded_no_completed_automatic_docking_sequence,/home/pc/perching_bag/20261120_175322_vicon_18ffbe,1,45301119,88.307,调试、未飞行、接管或未完整录到自动降落过程；不计为失败降落。
+20261120_175535_vicon_afbd89,是,included_success_from_operator_context_with_landing_sequence,/home/pc/perching_bag/20261120_175535_vicon_afbd89,1,95647707,141.979,按操作者今日仅一次失败的说明纳入；日志具有自动起飞、下降、停桨及之后着陆/解除解锁记录。
+20261120_181526_vicon_05b7fc,是,included_success_from_operator_context_with_landing_sequence,/home/pc/perching_bag/20261120_181526_vicon_05b7fc,1,76633382,103.633,按操作者今日仅一次失败的说明纳入；日志具有自动起飞、下降、停桨及之后着陆/解除解锁记录。
+20261120_183726_vicon_0f0610,是,included_success_from_operator_context_with_landing_sequence,/home/pc/perching_bag/20261120_183726_vicon_0f0610,1,104413602,159.812,按操作者今日仅一次失败的说明纳入；日志具有自动起飞、下降、停桨及之后着陆/解除解锁记录。
+20261120_184938_vicon_22feb6,是,included_success_from_operator_context_with_landing_sequence,/home/pc/perching_bag/20261120_184938_vicon_22feb6,1,78410369,109.629,按操作者今日仅一次失败的说明纳入；日志具有自动起飞、下降、停桨及之后着陆/解除解锁记录。

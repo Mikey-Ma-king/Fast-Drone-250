@@ -1,15 +1,18 @@
 <launch>
-  <node pkg="mocap_vicon"
-    type="mocap_vicon_node"
-    name="vicon"
-    output="screen">
-    <param name="server_address" value="192.168.10.139"/>
-    <param name="frame_rate" value="100"/>
-    <param name="max_accel" value="10.0"/>
-    <param name="publish_tf" value="false"/>
-    <param name="fixed_frame_id" value="mocap"/>
-    <rosparam param="model_list">[]</rosparam>
-    <!-- <remap from="vicon/Yuang_UAV/pose" to="/vins_fusion/odometry"/> -->
-    <remap from="vicon/Yuang_UAV/odom" to="/vins_fusion/imu_propagate"/>
-  </node>
+  <!-- Evaluation only. Never remap these outputs into odometry/control inputs. -->
+  <arg name="server_address" default="192.168.39.162"/>
+  <arg name="namespace" default="/evaluation"/>
+  <arg name="frame_rate" default="100"/>
+  <arg name="fixed_frame_id" default="mocap"/>
+  <group ns="$(arg namespace)">
+    <node pkg="mocap_vicon" type="mocap_vicon_node" name="vicon" output="screen">
+      <param name="server_address" value="$(arg server_address)"/>
+      <param name="frame_rate" value="$(arg frame_rate)"/>
+      <param name="max_accel" value="10.0"/>
+      <param name="publish_tf" value="false"/>
+      <param name="fixed_frame_id" value="$(arg fixed_frame_id)"/>
+      <!-- drone00: UAV; quadruped00: dog. Keep all subjects for evaluation. -->
+      <rosparam param="model_list">[]</rosparam>
+    </node>
+  </group>
 </launch>

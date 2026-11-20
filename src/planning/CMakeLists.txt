@@ -79,6 +79,12 @@ target_link_libraries(dog_pos_processor
   ${catkin_LIBRARIES}
 )
 
+# Ours-SW3: original lifecycle/output contract with a separate Python solver.
+# Keep the older, unused dog_pos_processor_new.cpp unchanged.
+add_executable(dog_pos_processor_sw3 src/dog_pos_processor_sw3.cpp)
+target_link_libraries(dog_pos_processor_sw3 ${catkin_LIBRARIES})
+add_dependencies(dog_pos_processor_sw3 ${catkin_EXPORTED_TARGETS})
+
 # 降落/仿真实验用 traj_server（放宽 mode 切换，无 1->0 / 2->1 回退）
 add_executable(planning_sim
   src/traj_server_sim.cpp

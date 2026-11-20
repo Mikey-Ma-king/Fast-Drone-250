@@ -13,17 +13,17 @@ find_package(catkin REQUIRED COMPONENTS
   quadrotor_msgs
   geometry_msgs
   sensor_msgs
+  nav_msgs
   uav_utils
   mavros
   px_comm
-  flow_publisher
 )
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 find_package(Eigen3 REQUIRED) 
 
 catkin_package(
-  CATKIN_DEPENDS px_comm flow_publisher
+  CATKIN_DEPENDS px_comm nav_msgs
 )
 
 include_directories(
@@ -41,11 +41,20 @@ add_executable(px4ctrl_node
   src/input.cpp
 )
 
-add_dependencies(px4ctrl_node quadrotor_msgs px_comm_gencpp)
+add_dependencies(px4ctrl_node ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(px4ctrl_node
   ${catkin_LIBRARIES}
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_flow_input test/test_flow_input.cpp src/input.cpp)
+  if(TARGET test_flow_input)
+    target_include_directories(test_flow_input PRIVATE src)
+    add_dependencies(test_flow_input ${catkin_EXPORTED_TARGETS})
+    target_link_libraries(test_flow_input ${catkin_LIBRARIES})
+  endif()
+endif()
 
 catkin_install_python(PROGRAMS thrust_calibrate_scrips/thrust_calibrate.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

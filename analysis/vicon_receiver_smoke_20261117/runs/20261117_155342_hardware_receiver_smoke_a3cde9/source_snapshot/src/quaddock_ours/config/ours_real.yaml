@@ -1,0 +1,70 @@
+# Fast-Drone-250 wiring for the frozen Ours-SW3 estimator.
+# All angles are radians; positions and velocities are SI units.
+uav_odom_topic: /vins_fusion/imu_propagate
+dog_odom_topic: /dog_pos_processor/sw3/dog_odom
+vision_topic: /dog_pos_processor/sw3/vision
+uwb_topic: /AOA_Tag_data
+
+# The C++ processor owns resets, the original startup seed and bearing gates.
+seed_topic: /dog_pos_processor/sw3/seed
+alignment_topic: /dog_pos_processor/sw3/alignment
+bearing_gate_topic: /dog_pos_processor/sw3/bearing_enabled
+wait_for_seed: true
+external_bearing_gate: true
+bearing_gate_timeout_s: 0.25
+max_publish_odom_age_s: 0.5
+
+# The old Fast-Drone-250 dog/target messages store yaw in orientation.w.
+dog_yaw_mode: legacy_yaw_w
+vision_yaw_mode: legacy_yaw_w
+# target_ekf_odom is a world-frame target position. Set relative_odom only
+# when the upstream detector is changed to publish UAV-body relative vectors.
+vision_input_mode: world_odom
+
+output_odom_topic: /quaddock/target_odom
+# Avoid competing with the original dog_pos_processor during integration.
+legacy_output_topic: /quaddock/legacy_preview
+status_topic: /quaddock/ours_sw3/status
+output_frame: world
+output_child_frame: target
+output_hz: 50.0
+max_odom_gap_s: 0.10
+# HC14 is about 20 Hz: allow the next dog packet to bracket the sample,
+# including a small callback/transport delay. Do not extrapolate measurements.
+match_wait_s: 0.10
+
+estimator:
+  # Frozen sw3_joint_12 from results/joint_gain_refinement_v3.
+  window_s: 3.0
+  process_scale: 4.0
+  yaw_process_ratio: 0.5
+  yaw_curvature_scale: 1.0
+  translation_curvature_scale: 0.5
+  yaw_bound_confidence: 1.0
+  translation_bound_confidence: 1.0
+  initial_yaw_sigma_deg: 10.0
+  initial_translation_sigma_m: 0.20
+  initial_yaw_rate_sigma_degps: 0.5
+  initial_translation_rate_sigma_mps: 0.03
+  nominal_yaw_rate_diffusion_degps_per_sqrt_s: 0.05
+  nominal_translation_rate_diffusion_mps_per_sqrt_s: 0.003
+  soft_bound_yaw_rate_degps: 0.5
+  soft_bound_translation_rate_mps: 0.03
+  soft_bound_yaw_sigma_degps: 0.2
+  soft_bound_translation_sigma_mps: 0.01
+  huber_transition_whitened_norm: 2.5
+  max_solver_iterations: 8
+  update_budget_ms: 40.0
+  maximum_relative_age_s: 0.05
+  # Same interpretation as the original C++ output: HC14 velocities are body axes.
+  dog_velocity_frame: body
+  vision_position_sigma_m: 0.02
+  vision_yaw_sigma_deg: 2.0
+  uwb_range_sigma_m: 0.05
+  uwb_bearing_sigma_deg: 3.0
+  dog_odom_position_sigma_m: 0.005
+  uav_odom_position_sigma_m: 0.005
+  vision_uav_lever_arm_m: [0.0, 0.0, 0.0]
+  vision_dog_lever_arm_m: [0.0, 0.0, 0.0]
+  uwb_uav_lever_arm_m: [0.0, 0.0, 0.0]
+  uwb_dog_lever_arm_m: [0.0, 0.0, 0.0]

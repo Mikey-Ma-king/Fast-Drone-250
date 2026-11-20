@@ -132,8 +132,6 @@ private:
     static const int UPDATE_INTERVAL = 5;  // 每5次输入更新一次T1R1
     static const int FIXED_DELAY = 45;     // 固定延迟帧数
 
-    std::vector<Eigen::Vector4d> svo_list;
-    Bezierpredict svopredict;
 };
 
 class gos_listener {
@@ -214,9 +212,8 @@ double radians_to_degrees(double radians);
 
 double rotationMatrixToEulerAngles(const Eigen::Matrix3d& R);
 
-void publishOdometry(const ros::TimerEvent&, ros::Publisher &odom_pub) ;
-
-std::vector<double> predictPositions(double pos1, double pos2);
+void publishOdometry(const ros::TimerEvent&, ros::Publisher &odom_pub,
+                     ros::Publisher &diagnostics_pub);
 
 Eigen::Matrix3d correctYaw(const Eigen::Matrix3d& pose);
 }

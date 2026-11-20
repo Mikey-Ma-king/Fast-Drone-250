@@ -24,6 +24,7 @@
 #include <set>
 #include <boost/thread.hpp>
 #include <ros/ros.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
 #include <mocap_base/MoCapDriverBase.h>
 #include "ViconDataStreamSDK_CPP/DataStreamClient.h" // From Vicon's SDK
 
@@ -104,6 +105,12 @@ class ViconDriver: public MoCapDriverBase {
 
     // For multi-threading
     boost::shared_mutex mtx;
+
+    // Evaluation provenance: one common host receipt stamp for all subjects.
+    ros::Time frame_stamp;
+    ros::Publisher diagnostics_pub;
+    std::map<std::string, bool> frame_valid;
+    void publishDiagnostics(bool frame_received);
 
 };
 }

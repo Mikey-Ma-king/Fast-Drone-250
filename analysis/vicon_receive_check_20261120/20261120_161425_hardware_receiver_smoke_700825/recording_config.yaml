@@ -1,0 +1,92 @@
+# One topic manifest shared by tracker.sh and the standalone recorder.
+# Default: localization evaluation and fusion replay, without raw camera/IMU data.
+# This records messages; it does not launch localization, control or masking.
+topics:
+  - /evaluation/vicon/drone00/pose
+  - /evaluation/vicon/quadruped00/pose
+  - /evaluation/vicon/diagnostics
+  - /dog_pos
+  - /vins_fusion/imu_propagate
+  - /svo/pose_imu
+  - /svo/info
+  - /read/odometry_diagnostics
+  - /target_ekf_odom
+  - /AOA_Tag_data
+  - /flow_data
+  - /dog_pos_processed
+  - /dog_pos_processor/sw3/dog_odom
+  - /dog_pos_processor/sw3/vision
+  - /dog_pos_processor/sw3/seed
+  - /dog_pos_processor/sw3/bearing_enabled
+  - /dog_pos_processor/sw3/alignment
+  - /quaddock/target_odom
+  - /quaddock/ours_sw3/status
+  - /quaddock/experiment/metadata
+  - /quaddock/experiment/health
+  - /quaddock/experiment/events
+  - /mavros/time_reference
+  - /mavros/timesync_status
+  - /mavros/state
+  # Small safety-critical channels: retain command, actuator and manual takeover evidence.
+  - /mavros/extended_state
+  - /mavros/rc/in
+  - /mavros/imu/data
+  - /mavros/setpoint_raw/attitude
+  - /debugPx4ctrl
+  - /position_cmd
+  - /mode_manager
+  - /px4ctrl/takeoff_land
+  - /yaw_diff_preset
+  - /test_reset_initialized
+  - /triger
+  - /tf_static
+  - /clock
+  - /rosout
+
+# Only the two named raw Vicon poses are recorded, including late publishers.
+# Keep optional baseline outputs; no baseline is launched.
+topic_regex:
+  - /quaddock/(joint|h0)/.*
+
+# Opt in with --with-images to rerun SchurVINS from raw stereo + IMU.
+# Disabled by default. Camera calibration accompanies images.
+image_topics:
+  - /camera/infra1/image_rect_raw
+  - /camera/infra2/image_rect_raw
+  - /camera/infra1/camera_info
+  - /camera/infra2/camera_info
+  - /mavros/imu/data_raw
+
+# Lightweight stream monitoring; images are recorded without a second subscriber.
+health_topics:
+  - /read/odometry_diagnostics
+  - /dog_pos
+  - /vins_fusion/imu_propagate
+  - /svo/pose_imu
+  - /svo/info
+  - /target_ekf_odom
+  - /AOA_Tag_data
+  - /flow_data
+  - /dog_pos_processed
+  - /dog_pos_processor/sw3/dog_odom
+  - /dog_pos_processor/sw3/vision
+  - /dog_pos_processor/sw3/bearing_enabled
+  - /dog_pos_processor/sw3/alignment
+  - /quaddock/target_odom
+  - /quaddock/ours_sw3/status
+  - /evaluation/vicon/drone00/pose
+  - /evaluation/vicon/quadruped00/pose
+  - /evaluation/vicon/diagnostics
+
+evaluation:
+  vicon_server_address: 192.168.39.162
+  uav_subject: drone00
+  dog_or_board_subject: quadruped00
+  truth_frame: mocap
+  position_unit: m
+  vicon_timestamp_source: host_ros_time_after_GetFrame
+  clock_sync_evidence: null
+  uav_subject_to_body_extrinsic: null
+  dog_subject_to_task_point_extrinsic: null
+  calibration_evidence: null
+  vicon_usage: evaluation_only

@@ -8,6 +8,7 @@ find_package(Eigen3 REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   geometry_msgs
+  diagnostic_msgs
   tf
   tf_conversions
   mocap_base
@@ -18,7 +19,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall")
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES mocap_vicon_driver ViconDataStreamSDK_CPP
-  CATKIN_DEPENDS roscpp geometry_msgs tf tf_conversions mocap_base
+  CATKIN_DEPENDS roscpp geometry_msgs diagnostic_msgs tf tf_conversions mocap_base
   DEPENDS Boost EIGEN3
 )
 
@@ -52,6 +53,7 @@ target_link_libraries(mocap_vicon_node
 )
 
 install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 install(TARGETS mocap_vicon_driver mocap_vicon_node
    ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

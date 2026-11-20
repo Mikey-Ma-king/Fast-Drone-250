@@ -197,6 +197,23 @@ void flow_callback(const nav_msgs::Odometry::ConstPtr& msg) {
 void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     int new_triger_mode = msgPtr->pose.orientation.w;
     std::cout << "new_triger_mode: " << new_triger_mode << std::endl;
+
+    // Match cmdCallback: modes 0/-2 integrate in world, modes 1/2 in dog axes.
+    const bool old_world = triger_mode == 0 || triger_mode == -2;
+    const bool new_world = new_triger_mode == 0 || new_triger_mode == -2;
+    const bool old_body = triger_mode == 1 || triger_mode == 2;
+    const bool new_body = new_triger_mode == 1 || new_triger_mode == 2;
+    const double cos_yaw = std::cos(hc14_dog_yaw);
+    const double sin_yaw = std::sin(hc14_dog_yaw);
+    if (old_body && new_world) {
+        // Dog axes -> world: R(+dog_yaw).
+        intergral_targetx = intergral_targetx_body * cos_yaw - intergral_targety_body * sin_yaw;
+        intergral_targety = intergral_targetx_body * sin_yaw + intergral_targety_body * cos_yaw;
+    } else if (old_world && new_body) {
+        // World -> dog axes: R(-dog_yaw).
+        intergral_targetx_body = intergral_targetx * cos_yaw + intergral_targety * sin_yaw;
+        intergral_targety_body = -intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
+    }
     
     if (new_triger_mode == -1){
         intergral_targetx = 0;
@@ -208,27 +225,11 @@ void mode_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
         if (triger_mode == -1){
             last_cmd_initialized = false;
         }
-        // 从body系切换到世界系（1 -> 0 或 2 -> 0）时的积分项坐标转换
-        if (triger_mode == 1) {
-            double cos_yaw = cos(vins_yaw);
-            double sin_yaw = sin(vins_yaw);
-            // 将body系积分项转换到世界系（使用平台坐标系）
-            intergral_targetx = intergral_targetx_body * cos_yaw + intergral_targety_body * sin_yaw;
-            intergral_targety = -intergral_targetx_body * sin_yaw + intergral_targety_body * cos_yaw;
-        }
         traj_initialized = false;
 
     }else if (new_triger_mode == 1){
         if (triger_mode == -1){
             last_cmd_initialized = false;
-        }
-        // 从世界系切换到body系（0 -> 1）时的积分项坐标转换
-        if (triger_mode == 0 || triger_mode == -2) {
-            double cos_yaw = cos(vins_yaw);
-            double sin_yaw = sin(vins_yaw);
-            // 将世界系积分项转换到body系（使用平台坐标系）
-            intergral_targetx_body = intergral_targetx * cos_yaw - intergral_targety * sin_yaw;
-            intergral_targety_body = intergral_targetx * sin_yaw + intergral_targety * cos_yaw;
         }
         mode_vins_z = vins_p.z();
         mode_vins_vel_z = vins_v.z();

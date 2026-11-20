@@ -33,6 +33,8 @@
 
 #define _USE_MATH_DEFINES
 #include <read.h>
+#include <svo_odometry.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
 
 #include <geometry_msgs/PoseStamped.h>
 #include "quadrotor_msgs/PositionCommand.h"
@@ -97,32 +99,15 @@ double fin_yaw = 0;                           // 滤波后的最终 yaw 角度(�
 double fin_pitch = 0;                         // 滤波后的最终 pitch 角度(弧度)
 double fin_roll = 0;                          // 滤波后的最终 roll 角度(弧度)
 int triger2 = 0;                              // 二次触发标志
-int vins_triger = 0;                          // VINS 有效标志,用于控制 odom 发布
 int gos_triger = 0;                           // 狗定位触发标志
 int map_triger = 16;                          // 标定计数器,用于控制狗-视觉对齐的采样时机
 Eigen::Vector3d avg{0.0, 0.0, 0.0};          // 位置滑动窗口均值
 
-// VINS/SVO 融合位姿
-Eigen::Vector3d svo_p{0.0, 0.0, 0.0};        // 无人机在世界系的位置(来自 VINS/SVO)
-Eigen::Vector3d svo_v{0.0, 0.0, 0.0};        // 无人机在世界系的速度(来自 VINS/SVO)
-Eigen::Vector3d vins_p{0.0, 0.0, 0.0};       // VINS 输出的无人机位置
-Eigen::Vector3d last_svo_p{0.0, 0.0, 0.0};   // 上一帧 SVO 位置(用于差分计算速度)
-Eigen::Vector3d last_svo_v{0.0, 0.0, 0.0};   // 上一帧 SVO 速度
-Eigen::Quaterniond svo_q;                      // 无人机姿态四元数
-
-// Bezier 预测结果缓冲区
-// 每条轨迹包含 _PREDICT_SEG 个 6 维向量 [px, py, pz, vx, vy, vz]
-std::vector<double> result_x(6,0.0);           // 发布给 target_ekf_odom 的 x 序列
-std::vector<double> result_y(6,0.0);           // 发布给 target_ekf_odom 的 y 序列
-std::vector<double> result_z(6,0.0);           // 发布给 target_ekf_odom 的 z 序列
-std::vector<double> result_vx(6,0.0);          // 发布给 target_ekf_odom 的 vx 序列
-std::vector<double> result_vy(6,0.0);          // 发布给 target_ekf_odom 的 vy 序列
-std::vector<double> result_vz(6,0.0);          // 发布给 target_ekf_odom 的 vz 序列
-std::vector<Eigen::Matrix<double, 6, 1>> g_predictedTrajectory(
-    _PREDICT_SEG, Eigen::Matrix<double, 6, 1>::Zero()
-);
-int predict_index = 0;                        // 当前使用的预测点索引
-static bool svo_initialize = false;           // SVO 预测器是否已初始化
+// The UAV stream uses bounded source-time extrapolation, independent of the
+// Bezier predictors used below for the detected target and the dog.
+SvoOdometry svo_odometry;
+std::mutex svo_odometry_mutex;
+Eigen::Vector3d vins_p = Eigen::Vector3d::Zero();  // Existing display reference.
 
 // 狗(Gos)定位相关 — 机器人狗自身报告的位置,用于与视觉检测做坐标系对齐
 Eigen::Vector3d gos_v{0.0, 0.0, 0.0};        // 狗报告的速度
@@ -300,56 +285,74 @@ double MedianFilter1::update(double new_value){
 // ============================================================================
 
 /**
- * publishOdometry — 发布 VINS/SVO 融合后的无人机里程计
- *
- * 发布到 /vins_fusion/imu_propagate 的 Odometry 消息,
- * 供整个系统中的其他节点(VINS、traj_server、dog_pos_processor)使用。
- * 位置和速度从 Bezier 预测轨迹中插值得到,姿态来自 SVO 原始四元数。
+ * Resample source-time SVO poses to 200 Hz using a bounded constant-velocity
+ * model. An output stamped "now" is extrapolated to now, never just restamped.
+ * Stop output when the original observation is old or velocity is unavailable.
  */
-void publishOdometry(const ros::TimerEvent&, ros::Publisher &odom_pub) {
-    nav_msgs::Odometry odom_msg;
-    odom_msg.header.stamp = ros::Time::now();
-    odom_msg.header.frame_id = "world";
-    if(svo_initialize){
-        // 速度取预测轨迹和原始 SVO 速度的加权平均(低通滤波效果)
-        if(predict_index>=1){
-            svo_v.x() = 0.5*g_predictedTrajectory[predict_index](3) + 0.5*g_predictedTrajectory[0](3);
-            svo_v.y() = 0.5*g_predictedTrajectory[predict_index](4) + 0.5*g_predictedTrajectory[0](4);
-            svo_v.z() = 0.5*g_predictedTrajectory[predict_index](5) + 0.5*g_predictedTrajectory[0](5);
-        }
-        else{
-            svo_v.x() = 0.3*g_predictedTrajectory[predict_index](3) + 0.7*g_predictedTrajectory[predict_index](3);
-            svo_v.y() = 0.3*g_predictedTrajectory[predict_index](4) + 0.7*g_predictedTrajectory[predict_index](4);
-            svo_v.z() = 0.3*g_predictedTrajectory[predict_index](5) + 0.7*g_predictedTrajectory[predict_index](5);
-        }
+void publishOdometry(const ros::TimerEvent&, ros::Publisher &odom_pub,
+                     ros::Publisher &diagnostics_pub) {
+    const ros::Time now = ros::Time::now();
+    SvoOdometry::State state;
+    std::string last_input;
+    double input_stamp = 0.0;
+    double input_receipt = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(svo_odometry_mutex);
+        state = svo_odometry.sample(now.toSec());
+        last_input = svo_odometry.lastInput();
+        input_stamp = svo_odometry.lastInputStamp();
+        input_receipt = svo_odometry.lastInputReceipt();
+    }
+    if (state.valid) {
+        nav_msgs::Odometry odom_msg;
+        odom_msg.header.stamp = now;
+        odom_msg.header.frame_id = "world";
+        odom_msg.pose.pose.position.x = state.position.x();
+        odom_msg.pose.pose.position.y = state.position.y();
+        odom_msg.pose.pose.position.z = state.position.z();
+        odom_msg.pose.pose.orientation.x = state.orientation.x();
+        odom_msg.pose.pose.orientation.y = state.orientation.y();
+        odom_msg.pose.pose.orientation.z = state.orientation.z();
+        odom_msg.pose.pose.orientation.w = state.orientation.w();
+        odom_msg.twist.twist.linear.x = state.velocity.x();
+        odom_msg.twist.twist.linear.y = state.velocity.y();
+        odom_msg.twist.twist.linear.z = state.velocity.z();
+        odom_pub.publish(odom_msg);
+    } else if (state.source_stamp > 0.0) {
+        ROS_WARN_THROTTLE(1.0, "read: suppress UAV odometry (%s), source age %.3f s",
+                          state.reason, now.toSec() - state.source_stamp);
+    }
 
-        // 位置 — 使用 result_* 序列(由 predictPositions 做匀速外推)
-        odom_msg.pose.pose.position.x = result_x[predict_index];
-        odom_msg.pose.pose.position.y = result_y[predict_index];
-        odom_msg.pose.pose.position.z = result_z[predict_index];
-
-        // 姿态 — 直接使用 SVO 原始四元数
-        odom_msg.pose.pose.orientation.x = svo_q.x();
-        odom_msg.pose.pose.orientation.y = svo_q.y();
-        odom_msg.pose.pose.orientation.z = svo_q.z();
-        odom_msg.pose.pose.orientation.w = svo_q.w();
-
-        // 速度安全门: 速度 > 4m/s 时停止发布(防止 VINS 漂移导致控制发散)
-        if (svo_v.norm() < 4 || vins_triger == 0){
-            odom_msg.twist.twist.linear.x = svo_v.x();
-            odom_msg.twist.twist.linear.y = svo_v.y();
-            odom_msg.twist.twist.linear.z = svo_v.z();
-            odom_pub.publish(odom_msg);
-        }
-        else{
-            if (vins_triger == 0)
-                std::cout<<"停止发布vins"<<std::endl;
-            vins_triger = 0;
-        }
-
-        // 逐步前进预测索引(前几帧使用最近的预测点,避免初始化瞬变)
-        if(predict_index<=3)
-            predict_index+=1;
+    // Preserve original observation timing in the recording, at only 10 Hz.
+    static ros::Time last_diagnostics;
+    if ((now - last_diagnostics).toSec() >= 0.1 || now < last_diagnostics) {
+        last_diagnostics = now;
+        diagnostic_msgs::DiagnosticArray diagnostics;
+        diagnostics.header.stamp = now;
+        diagnostics.header.frame_id = "world";
+        diagnostic_msgs::DiagnosticStatus status;
+        status.name = "read/uav_odometry";
+        status.level = state.valid ? diagnostic_msgs::DiagnosticStatus::OK :
+                                     diagnostic_msgs::DiagnosticStatus::WARN;
+        status.message = state.reason;
+        auto add = [&](const std::string& key, const std::string& value) {
+            diagnostic_msgs::KeyValue kv;
+            kv.key = key;
+            kv.value = value;
+            status.values.push_back(kv);
+        };
+        add("source_stamp", std::to_string(state.source_stamp));
+        add("source_age_s", state.source_stamp > 0.0 ?
+            std::to_string(now.toSec() - state.source_stamp) : "unknown");
+        add("last_input_result", last_input);
+        add("input_source_stamp", std::to_string(input_stamp));
+        add("input_age_at_receipt_s", input_stamp > 0.0 ?
+            std::to_string(input_receipt - input_stamp) : "unknown");
+        add("output_valid", state.valid ? "true" : "false");
+        add("velocity_source", "successive accepted SVO positions / source timestamp difference");
+        add("output_model", "constant velocity; latest valid SVO orientation held");
+        diagnostics.status.push_back(status);
+        diagnostics_pub.publish(diagnostics);
     }
 }
 
@@ -491,10 +494,15 @@ void gos_pos_pub(const ros::TimerEvent&, ros::Publisher &odom_pub) {
         gos_msg.pose.pose.position.x = round_to_decimal_places(gos_vins_pos.x(), 2);
         gos_msg.pose.pose.position.y = round_to_decimal_places(gos_vins_pos.y(), 2);
         // 高度安全门: 狗报告高度与 VINS 高度差超过 3m 则使用 VINS 高度
-        if(fabs(gos_vins_pos.z() - svo_p.z()) < 3)
+        SvoOdometry::State uav_state;
+        {
+            std::lock_guard<std::mutex> lock(svo_odometry_mutex);
+            uav_state = svo_odometry.sample(ros::Time::now().toSec());
+        }
+        if(fabs(gos_vins_pos.z() - uav_state.position.z()) < 3)
             gos_msg.pose.pose.position.z = round_to_decimal_places(gos_vins_pos.z(), 2)+0.05;
         else
-            gos_msg.pose.pose.position.z = svo_p.z();
+            gos_msg.pose.pose.position.z = uav_state.position.z();
         gos_msg.pose.pose.orientation.w = gos_vins_yaw;
         gos_msg.pose.pose.orientation.x = 0;
         gos_msg.pose.pose.orientation.y = 0;
@@ -505,33 +513,6 @@ void gos_pos_pub(const ros::TimerEvent&, ros::Publisher &odom_pub) {
         // 注意: 当前版本不发布 gos_msg (被注释),仅维护内部预测状态
     }
 }
-
-/**
- * predictPositions — 匀速运动位置预测
- *
- * 假设目标以恒定速度运动,根据最近两个位置计算速度,外推未来 5 个位置。
- * 用于将 60Hz 的视觉检测结果插值到 200Hz 的发布频率,平滑控制指令。
- *
- * @param pos1 上一时刻位置
- * @param pos2 当前时刻位置
- * @return     [pos2, pos2+v*dt, pos2+v*2dt, ..., pos2+v*5dt] (共 6 个点)
- */
-std::vector<double> predictPositions(double pos1, double pos2) {
-    const double dt_input = 1.0 / 60;    // 输入位置的时间间隔(视觉检测 ~60Hz)
-    const double dt_predict = 1.0 / 200;  // 预测位置的时间间隔(发布频率 200Hz)
-
-    double velocity = (pos2 - pos1) / dt_input;  // 匀速模型: v = Δx / Δt
-
-    std::vector<double> predictedPositions;
-    predictedPositions.push_back(pos2);  // 起点 = 当前位置
-    for (int i = 1; i <= 5; ++i) {
-        double timeElapsed = i * dt_predict;
-        double newPos = pos2 + velocity * timeElapsed;  // x(t) = x0 + v·t
-        predictedPositions.push_back(newPos);
-    }
-    return predictedPositions;
-}
-
 
 // ============================================================================
 // 七、ROS 回调类 — 订阅各类传感器数据
@@ -601,9 +582,9 @@ UAVStateListener1::UAVStateListener1()
           vins_input_count(0) {
 
 #ifndef SIMULATE
-    svo_sub = nh.subscribe<geometry_msgs::PoseWithCovarianceStamped>("/svo/pose_imu", 3, &UAVStateListener1::svo_callback, this);
+    svo_sub = nh.subscribe<geometry_msgs::PoseWithCovarianceStamped>("/svo/pose_imu", 1, &UAVStateListener1::svo_callback, this);
 #else
-    svo_sub = nh.subscribe<geometry_msgs::PoseStamped>("mavros/local_position/pose", 3, &UAVStateListener1::svo_callback, this);
+    svo_sub = nh.subscribe<geometry_msgs::PoseStamped>("mavros/local_position/pose", 1, &UAVStateListener1::svo_callback, this);
 #endif
     pose_sub = nh.subscribe<nav_msgs::Odometry>("/vins_fusion/imu_propagate", 3, &UAVStateListener1::pose_cb, this);
     AOA_sub = nh.subscribe<nav_msgs::Odometry>("/AOA_Tag_data", 3, &UAVStateListener1::AOA_callback, this);
@@ -679,75 +660,20 @@ void UAVStateListener1::pose_cb(const nav_msgs::Odometry::ConstPtr& msg) {
     }
 }
 
-/**
- * SVO/位姿回调 — Bezier 轨迹预测
- *
- * 接收视觉里程计(SVO)或仿真位姿,通过 Bezier 曲线拟合历史轨迹,
- * 生成平滑的预测轨迹 g_predictedTrajectory。
- *
- * Bezier 预测的优势:
- *   - 平滑性: 保证 C² 连续(位置+速度+加速度连续)
- *   - 延迟补偿: 预测未来轨迹可以减少视觉延迟对控制的影响
- *   - 鲁棒性: 对单帧离群值不敏感
- */
+/** Accept fresh poses using their original acquisition timestamps. */
 #ifdef SIMULATE
-    void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseStamped>& msg) {
+void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseStamped>& msg) {
+    const auto& pose = msg->pose;
 #else
-    void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseWithCovarianceStamped>& msg) {
+void UAVStateListener1::svo_callback(const boost::shared_ptr<const geometry_msgs::PoseWithCovarianceStamped>& msg) {
+    const auto& pose = msg->pose.pose;
 #endif
-        predict_index = 0;
-
-#ifdef SIMULATE
-        Eigen::Vector4d state(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,ros::Time::now().toSec());
-#else
-        Eigen::Vector4d state(msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z,ros::Time::now().toSec());
-#endif
-        static std::vector<Eigen::Matrix<double,6,1>> svo_predict_list;
-        // 初始化阶段: 收集 _MAX_SEG 个历史点
-        if(!svo_initialize){
-            svo_list.push_back(state);
-            if(svo_list.size()>=_MAX_SEG){
-                svo_initialize=1;
-            }
-        }
-        else{
-            // 滑动窗口: 删除最旧的点,加入最新的点
-            svo_list.erase(svo_list.begin());
-            svo_list.push_back(state);
-
-            int bezier_flag = svopredict.TrackingGeneration(5,5,svo_list);
-            if(bezier_flag==0){
-                svo_predict_list = svopredict.getStateListFromBezier(_PREDICT_SEG);
-                g_predictedTrajectory = svo_predict_list;
-                // 保存上一帧状态用于差分
-                last_svo_p = svo_p;
-                svo_p.x() = svo_predict_list[0](0);
-                svo_p.y() = svo_predict_list[0](1);
-                svo_p.z() = svo_predict_list[0](2);
-                svo_v.x() = svo_predict_list[0](3);
-                svo_v.y() = svo_predict_list[0](4);
-                svo_v.z() = svo_predict_list[0](5);
-#ifndef SIMULATE
-                svo_q.w() = msg->pose.pose.orientation.w;
-                svo_q.x() = msg->pose.pose.orientation.x;
-                svo_q.y() = msg->pose.pose.orientation.y;
-                svo_q.z() = msg->pose.pose.orientation.z;
-#else
-                svo_q.w() = msg->pose.orientation.w;
-                svo_q.x() = msg->pose.orientation.x;
-                svo_q.y() = msg->pose.orientation.y;
-                svo_q.z() = msg->pose.orientation.z;
-#endif
-                // 生成 200Hz 的匀速插值序列(将 60Hz SVO 上采样到 200Hz)
-                result_x = predictPositions(last_svo_p.x(), svo_p.x());
-                result_y = predictPositions(last_svo_p.y(), svo_p.y());
-                result_z = predictPositions(last_svo_p.z(), svo_p.z());
-                result_vx = predictPositions(last_svo_v.x(), svo_v.x());
-                result_vy = predictPositions(last_svo_v.y(), svo_v.y());
-                result_vz = predictPositions(last_svo_v.z(), svo_v.z());
-            }
-        }
-    }
+    const Eigen::Vector3d position(pose.position.x, pose.position.y, pose.position.z);
+    const Eigen::Quaterniond orientation(pose.orientation.w, pose.orientation.x,
+                                         pose.orientation.y, pose.orientation.z);
+    std::lock_guard<std::mutex> lock(svo_odometry_mutex);
+    svo_odometry.update(msg->header.stamp.toSec(), position, orientation, ros::Time::now().toSec());
+}
 
 
 std::pair<Eigen::Vector3d, Eigen::Matrix3d>  UAVStateListener1::get_T1_R1() const {
@@ -900,10 +826,12 @@ void read::reda(ros::NodeHandle& nh) {
     delayed_vins_pub = nh.advertise<nav_msgs::Odometry>("/vins_delayed", 10);
 #endif
 
-    // 创建定时器: 200Hz 发布 VINS 里程计, 30Hz 发布狗位置预测
+    // Keep the downstream 200 Hz interface; inputs are nominally 30 Hz.
     ros::Publisher odom_pub = nh.advertise<nav_msgs::Odometry>("/vins_fusion/imu_propagate", 10);
+    ros::Publisher diagnostics_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>(
+        "/read/odometry_diagnostics", 10);
     ros::Timer timer = nh.createTimer(ros::Duration(1.0 / 200.0),
-                                     boost::bind(publishOdometry, _1, boost::ref(odom_pub)));
+        boost::bind(publishOdometry, _1, boost::ref(odom_pub), boost::ref(diagnostics_pub)));
     ros::Timer gos_timer = nh.createTimer(ros::Duration(1.0 / 30.0),
                                      boost::bind(gos_pos_pub, _1, boost::ref(target_pose_pub)));
 

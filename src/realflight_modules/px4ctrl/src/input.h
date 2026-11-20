@@ -5,6 +5,7 @@
 #include <Eigen/Dense>
 
 #include <sensor_msgs/Imu.h>
+#include <nav_msgs/Odometry.h>
 #include <quadrotor_msgs/PositionCommand.h>
 #include <quadrotor_msgs/TakeoffLand.h>
 #include <mavros_msgs/RCIn.h>
@@ -15,7 +16,6 @@
 #include "PX4CtrlParam.h"
 
 #include <px_comm/OpticalFlow.h>
-#include <flow_publisher/FlowDataMsg.h>
 
 class RC_Data_t
 {
@@ -63,7 +63,7 @@ public:
   Eigen::Vector3d w;
 
   nav_msgs::Odometry msg;
-  flow_publisher::FlowDataMsg msg2;
+  nav_msgs::Odometry msg2;
   sensor_msgs::Imu msg3;
   ros::Time rcv_stamp;
   bool recv_new_msg;
@@ -73,7 +73,7 @@ public:
   double flow_flag = false;
   Odom_Data_t();
   void feed1(nav_msgs::OdometryConstPtr pMsg);
-  void feed2(const boost::shared_ptr<const flow_publisher::FlowDataMsg>& data);
+  void feed2(nav_msgs::OdometryConstPtr data);
   // void feed3(sensor_msgs::ImuConstPtr pMsg);
 };
 

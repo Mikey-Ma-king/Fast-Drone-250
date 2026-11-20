@@ -11,7 +11,10 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   nodelet
   quadrotor_msgs
-  
+  diagnostic_msgs
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
 )
 
 find_package(OpenCV 4 REQUIRED)
@@ -20,7 +23,7 @@ find_package(cv_bridge REQUIRED)
 
 catkin_package(
   INCLUDE_DIRS include ${EIGEN3_INCLUDE_DIR}
-  CATKIN_DEPENDS  roscpp nodelet
+  CATKIN_DEPENDS  roscpp nodelet quadrotor_msgs diagnostic_msgs geometry_msgs nav_msgs sensor_msgs
   LIBRARIES ${PROJECT_NAME}
   DEPENDS EIGEN3
 )
@@ -72,3 +75,8 @@ target_link_libraries(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     /usr/local/lib/libma27.a
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_svo_odometry test/test_svo_odometry.cpp)
+  add_executable(read_odometry_replay EXCLUDE_FROM_ALL test/odometry_replay.cpp)
+endif()

@@ -17,6 +17,8 @@
  */
 
 #include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <tf_conversions/tf_eigen.h>
@@ -36,6 +38,11 @@ bool ViconDriver::init() {
   nh.param("max_accel", max_accel, 10.0);
   nh.param("publish_tf", publish_tf, false);
   nh.param("fixed_frame_id", fixed_frame_id, string("mocap"));
+  if (frame_rate <= 0) {
+    ROS_ERROR("frame_rate must be positive");
+    return false;
+  }
+  diagnostics_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
 
   frame_interval = 1.0 / static_cast<double>(frame_rate);
   double& dt = frame_interval;
@@ -95,9 +102,14 @@ bool ViconDriver::init() {
 
 void ViconDriver::run() {
   ViconSDK::Result::Enum result = client->GetFrame().Result;
-  if (result != ViconSDK::Result::Success)
+  frame_stamp = ros::Time::now();
+  if (result != ViconSDK::Result::Success) {
+    publishDiagnostics(false);
+    ros::WallDuration(0.01).sleep();
     return;
+  }
   handleFrame();
+  publishDiagnostics(true);
   return;
 }
 
@@ -110,9 +122,12 @@ void ViconDriver::disconnect() {
 
 void ViconDriver::handleFrame() {
   int body_count = client->GetSubjectCount().SubjectCount;
+  frame_valid.clear();
+  std::set<std::string> present;
   // Assign each subject with a thread
   vector<boost::thread> subject_threads;
   subject_threads.reserve(body_count);
+  vector<int> subject_indices;
 
   for (int i = 0; i< body_count; ++i) {
     string subject_name =
@@ -120,6 +135,7 @@ void ViconDriver::handleFrame() {
 
     // Process the subject if required
     if (model_set.empty() || model_set.count(subject_name)) {
+      present.insert(subject_name);
       // Create a new subject if it does not exist
       if (subjects.find(subject_name) == subjects.end()) {
         subjects[subject_name] = Subject::SubjectPtr(
@@ -127,15 +143,22 @@ void ViconDriver::handleFrame() {
         subjects[subject_name]->setParameters(
             process_noise, measurement_noise, frame_rate);
       }
-      // Handle the subject in a different thread
-      subject_threads.emplace_back(&ViconDriver::handleSubject, this, i);
-      //handleSubject(i);
+      subject_indices.push_back(i);
     }
   }
+
+  // Finish inserting subjects before worker threads read the shared map.
+  for (int index : subject_indices)
+    subject_threads.emplace_back(&ViconDriver::handleSubject, this, index);
 
   // Wait for all the threads to stop
   for(auto &thread : subject_threads) {
     thread.join();
+  }
+
+  // A subject disappearing from the server is also a tracking loss.
+  for (auto &entry : subjects) {
+    if (!present.count(entry.first)) entry.second->disable();
   }
 
   // Send out warnings
@@ -177,6 +200,14 @@ void ViconDriver::handleSubject(const int& sub_idx) {
       quat.Rotation[0], quat.Rotation[1], quat.Rotation[2]);
   Eigen::Vector3d m_pos(trans.Translation[0]/1000,
       trans.Translation[1]/1000, trans.Translation[2]/1000);
+  if (!m_pos.allFinite() || !m_att.coeffs().allFinite() || m_att.norm() < 1e-9) {
+    subjects[subject_name]->disable();
+    return;
+  }
+  {
+    boost::unique_lock<boost::shared_mutex> lock(mtx);
+    frame_valid[subject_name] = true;
+  }
 
   // Re-enable the object if it is lost previously
   if (subjects[subject_name]->getStatus() == Subject::LOST) {
@@ -184,7 +215,7 @@ void ViconDriver::handleSubject(const int& sub_idx) {
   }
 
   // Feed the new measurement to the subject
-  double time = ros::Time::now().toSec();
+  double time = frame_stamp.toSec();
   subjects[subject_name]->processNewMeasurement(time, m_att, m_pos);
   //read_lock.unlock();
 
@@ -209,6 +240,53 @@ void ViconDriver::handleSubject(const int& sub_idx) {
   }
 
   return;
+}
+
+void ViconDriver::publishDiagnostics(bool frame_received) {
+  diagnostic_msgs::DiagnosticArray msg;
+  msg.header.stamp = frame_stamp;
+  msg.header.frame_id = fixed_frame_id;
+  auto add = [](diagnostic_msgs::DiagnosticStatus& status,
+                const std::string& key, const std::string& value) {
+    diagnostic_msgs::KeyValue kv;
+    kv.key = key;
+    kv.value = value;
+    status.values.push_back(kv);
+  };
+  diagnostic_msgs::DiagnosticStatus stream;
+  stream.name = "vicon/stream";
+  stream.hardware_id = server_address;
+  stream.level = frame_received ? diagnostic_msgs::DiagnosticStatus::OK :
+                                  diagnostic_msgs::DiagnosticStatus::ERROR;
+  stream.message = frame_received ? "frame received" : "GetFrame failed";
+  add(stream, "timestamp_source", "host_ros_time_after_GetFrame; not synchronized capture time");
+  add(stream, "frame_received", frame_received ? "true" : "false");
+  if (frame_received) {
+    const auto number = client->GetFrameNumber();
+    const auto latency = client->GetLatencyTotal();
+    if (number.Result == ViconSDK::Result::Success)
+      add(stream, "frame_number", std::to_string(number.FrameNumber));
+    if (latency.Result == ViconSDK::Result::Success) {
+      std::ostringstream value;
+      value << std::setprecision(12) << latency.Total;
+      add(stream, "sdk_total_latency_s", value.str());
+    }
+  }
+  msg.status.push_back(stream);
+  for (const auto &entry : subjects) {
+    diagnostic_msgs::DiagnosticStatus body;
+    body.name = "vicon/" + entry.first;
+    body.hardware_id = server_address;
+    const auto valid = frame_valid.find(entry.first);
+    const bool raw_valid = frame_received && valid != frame_valid.end() && valid->second;
+    body.level = raw_valid ? diagnostic_msgs::DiagnosticStatus::OK :
+                            diagnostic_msgs::DiagnosticStatus::WARN;
+    body.message = raw_valid ? "raw pose valid" : "occluded, absent or invalid; no raw pose";
+    add(body, "raw_pose_valid", raw_valid ? "true" : "false");
+    add(body, "filter_status", std::to_string(entry.second->getStatus()));
+    msg.status.push_back(body);
+  }
+  diagnostics_pub.publish(msg);
 }
 
 }

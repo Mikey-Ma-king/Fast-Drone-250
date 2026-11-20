@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>quaddock_ours</name>
+  <version>1.0.0</version>
+  <description>Frozen Ours-SW3 estimator adapter for the Fast-Drone-250 ROS stack.</description>
+  <maintainer email="quaddock@example.com">QuadDock</maintainer>
+  <license>Internal research code</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+</package>

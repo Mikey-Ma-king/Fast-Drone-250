@@ -1,6 +1,32 @@
-#!/bin/bash
-source devel/setup.bash
-roslaunch planning traj_server.launch
+#!/usr/bin/env bash
+set -eo pipefail
+workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$workspace/devel/setup.bash"
 
-rosbag record  /dog_pos /mode_manager /mavros/setpoint_raw/attitude  /vins_fusion/imu_propagate /position_cmd /target_ekf_odom /flow_data /px4ctrl/takeoff_land /dog_pos_processed /dog_pos_aoa_debug /dog_pos /beacon /uwb/odometry/a3 /AOA_Tag_data /land_mark /test_mark /drone2/planning/traj /traj_v -o /home/pc/perching_bag/perching
-wait
+planner_pid=""
+recorder_pid=""
+cleanup() {
+    # Finalize rosbag before stopping the planner launch owned by this script.
+    if [[ -n "$recorder_pid" ]] && kill -0 "$recorder_pid" 2>/dev/null; then
+        kill -TERM "$recorder_pid"
+        wait "$recorder_pid" || true
+    fi
+    if [[ -n "$planner_pid" ]] && kill -0 "$planner_pid" 2>/dev/null; then
+        kill -INT "$planner_pid"
+        wait "$planner_pid" || true
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+# Run concurrently: foreground roslaunch used to block recording indefinitely.
+roslaunch planning traj_server.launch &
+planner_pid=$!
+/usr/bin/python3 "$workspace/src/quaddock_logging/scripts/record_experiment.py" \
+    --workspace "$workspace" "$@" &
+recorder_pid=$!
+# Keep the original trajectory process alive even if recording fails or reaches
+# an optional duration limit. Its lifetime must not depend on the logger.
+wait "$planner_pid"

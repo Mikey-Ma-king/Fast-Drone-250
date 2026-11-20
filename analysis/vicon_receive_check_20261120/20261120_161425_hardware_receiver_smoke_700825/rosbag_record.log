@@ -1,0 +1,8 @@
+[ INFO] [1795162466.279180709]: Recording to '/tmp/quaddock_recording_smoke_epg_6809/runs/20261120_161425_hardware_receiver_smoke_700825/data_0.bag'.
+[ INFO] [1795162466.280700582]: Subscribing to /rosout
+[ INFO] [1795162466.286001263]: Subscribing to /evaluation/vicon/diagnostics
+[ INFO] [1795162466.289086921]: Subscribing to /evaluation/vicon/quadruped00/pose
+[ INFO] [1795162466.291398099]: Subscribing to /evaluation/vicon/drone00/pose
+[ INFO] [1795162466.293880834]: Subscribing to /quaddock/experiment/metadata
+[ INFO] [1795162466.300499016]: Subscribing to /quaddock/experiment/health
+[ INFO] [1795162466.303228966]: Subscribing to /quaddock/experiment/events

@@ -257,11 +257,11 @@ const double land_vel = -0.6;          // 降落速度(m/s,负表示下降)
 
 // ----- X 轴 (狗头方向) PID -----
 double x_p = 0.3;                        // 比例增益
-double x_i = 0.83;                       // 积分增益(较大,用于消除稳态误差)
+double x_i = 0.4;                        // 积分增益
 double x_d = 0.0;                        // 微分增益(当前为 0,速度前馈替代了 D 的作用)
 double x_d_max = 0.12;                   // 微分项上限(限制噪声放大)
 double v_offset_x = 0.0;                 // 速度偏移(手动微调用)
-double integral_limit_x = 0.7;           // 积分项上限(防 windup)
+double integral_limit_x = 0.4;           // 积分项上限(防 windup)
 double integral_decay = 0.0;             // 积分衰减系数(1/s),防止积分 windup
 double acc_gain_x = 0.0;                 // 加速度前馈增益(当前关闭)
 double jerk_filter_alpha_x = 0.02;       // jerk 低通滤波系数(0=不滤波, 1=完全信任新值)
@@ -274,11 +274,11 @@ double jerk_feedforward_sat_value_x = 1.0;      // jerk 前馈饱和值
 // ----- Y 轴 (狗侧方向) PID -----
 // 与 X 轴参数结构相同,但积分增益较小(因为侧面运动量小,不需要大积分)
 double y_p = 0.3;
-double y_i = 0.83;
+double y_i = 0.4;
 double y_d = 0.0;
 double y_d_max = 0.12;
 double v_offset_y = 0.0;
-double integral_limit_y = 0.4;           // Y 轴积分限制比 X 小(侧面不需要大积分)
+double integral_limit_y = 0.4;           // Y 轴积分上限，与 X 一致
 double acc_gain_y = 0.0;
 double jerk_filter_alpha_y = 0.02;
 double jerk_gain_y = 0.0;
@@ -935,7 +935,10 @@ void cmdCallback(const ros::TimerEvent &e) {
     return;
   if (triger_mode == -1)
     return;
-  if ((triger_mode == 0 || triger_mode == -2) && !traj_initialized)
+  // MPC topics arrive independently; wait for complete position/velocity arrays.
+  if ((triger_mode == 0 || triger_mode == -2) &&
+      (!traj_initialized || trajectory_points.empty() ||
+       trajectory_v_points.size() != trajectory_points.size()))
     return;
   // Mode 1/2: 需要狗位姿数据 ready
   if ((triger_mode == 1 || triger_mode == 2) && !(hc14_dog_pos_received && hc14_offset_yaw_ready))
@@ -1616,7 +1619,8 @@ void flag_and_hc14_process_callback(const ros::TimerEvent &event) {
 // 根据当前时间和轨迹接收时间的差,从 MPC 轨迹序列中插值出当前位置、速度和加速度。
 
 void mpc_callback(const ros::TimerEvent &event){
-  if (!traj_initialized)
+  if (!traj_initialized || trajectory_points.empty() ||
+      trajectory_v_points.size() != trajectory_points.size())
   {
     return;
   }
@@ -1634,7 +1638,7 @@ void mpc_callback(const ros::TimerEvent &event){
   int idx_up = idx_down + 1;
 
   // 边界处理
-  int max_idx = static_cast<int>(trajectory_points.size() - 1);
+  int max_idx = static_cast<int>(trajectory_points.size()) - 1;
   idx_down = std::max(0, std::min(idx_down, max_idx));
   idx_up = std::max(0, std::min(idx_up, max_idx));
 

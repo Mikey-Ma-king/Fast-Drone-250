@@ -1,0 +1,57 @@
+[ WARN] [1795162463.313394986]: Initialize subject drone00
+[ WARN] [1795162463.313450450]: Initialize subject quadruped00
+[ WARN] [1795162463.313467558]: Lose track of subject wry_anchor2
+[ WARN] [1795162463.313484278]: Initialize subject wry_drone1
+[ WARN] [1795162463.313496303]: Initialize subject wry_metal2
+[ WARN] [1795162463.313510824]: Initialize subject wry_metal3
+[ WARN] [1795162463.314014671]: Initialize subject drone00
+[ WARN] [1795162463.314045454]: Initialize subject quadruped00
+[ WARN] [1795162463.314059802]: Initialize subject wry_drone1
+[ WARN] [1795162463.314071808]: Initialize subject wry_metal2
+[ WARN] [1795162463.314089364]: Initialize subject wry_metal3
+[ WARN] [1795162464.317072554]: Lose track of subject wry_anchor2
+[ WARN] [1795162465.319784046]: Lose track of subject wry_anchor2
+[ WARN] [1795162466.347266993]: Lose track of subject wry_anchor2
+[ WARN] [1795162467.347436455]: Lose track of subject wry_anchor2
+[ WARN] [1795162468.349194800]: Lose track of subject wry_anchor2
+[ WARN] [1795162469.351316259]: Lose track of subject wry_anchor2
+[ WARN] [1795162470.358030246]: Lose track of subject wry_anchor2
+[ WARN] [1795162471.362695432]: Lose track of subject wry_anchor2
+[ WARN] [1795162472.367842565]: Lose track of subject wry_anchor2
+[ WARN] [1795162473.377705709]: Lose track of subject wry_anchor2
+[ WARN] [1795162474.382057500]: Lose track of subject wry_anchor2
+[ INFO] [1795162463.204023484]: Connecting to Vicon Datastream server at 192.168.39.162
+[ INFO] [1795162463.207067549]: Successfully Connect to Vicon server at 192.168.39.162
+[ INFO] [1795162463.207107753]: Successfully configure Vicon server at 192.168.39.162
+[ INFO] [1795162463.307210177]: Successfully initialize Vicon connection!
+... logging to /tmp/quaddock_recording_smoke_epg_6809/ros_logs/639e1740-e4ba-11f1-9c99-a733696c6a89/roslaunch-pc-Default-string-892619.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/home/pc/Fast-Drone-250/src/motion_capture_system/mocap_vicon/launch/vicon.launch
+[1mstarted roslaunch server http://127.0.0.1:33651/[0m
+
+SUMMARY
+========
+
+PARAMETERS
+ * /evaluation/vicon/fixed_frame_id: mocap
+ * /evaluation/vicon/frame_rate: 100
+ * /evaluation/vicon/max_accel: 10.0
+ * /evaluation/vicon/model_list: []
+ * /evaluation/vicon/publish_tf: False
+ * /evaluation/vicon/server_address: 192.168.39.162
+ * /rosdistro: noetic
+ * /rosversion: 1.17.0
+
+NODES
+  /evaluation/
+    vicon (mocap_vicon/mocap_vicon_node)
+
+[1mROS_MASTER_URI=http://127.0.0.1:43297[0m
+]2;/home/pc/Fast-Drone-250/src/motion_capture_system/mocap_vicon/launch/vicon.launch http://127.0.0.1:43297
+[1mprocess[evaluation/vicon-1]: started with pid [892638][0m
+[evaluation/vicon-1] killing on exit
+shutting down processing monitor...
+... shutting down processing monitor complete
+[1mdone[0m

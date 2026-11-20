@@ -1,5 +1,14 @@
 # PX4 controller  除了最后一章“PX4 Controller详细介绍”以外都先看一遍免得踩坑
 
+## 本仓库的光流接口
+
+`upixels_flow.sh` 使用的发布端将 `/flow_data` 发布为 `nav_msgs/Odometry`：
+`pose.pose.position.z` 是米制离地高度，x/y 是光流积分量。px4ctrl 的订阅及 `Odom_Data_t::feed2` 与此格式匹配，仅读取有限且大于零的 z，不再依赖 `flow_publisher/FlowDataMsg`。
+
+沿用现有阶段划分：`Odom_State == 1` 时更新高度，切到 `2` 后忽略光流。光流消息不刷新完整 VIO 的接收时间，不能单独使无人机里程计有效。当前发布端未填时间戳或质量字段，不能据此接口判断测量的采集龄期或质量；这项修复不包含 VIO/测高高度基准对齐或融合策略修改。
+
+可离线运行 `devel/lib/px4ctrl/test_flow_input` 检查高度单位、无效测高、VIO 有效期和阶段切换。测试不启动控制节点或连接真机。二进制重新编译后由下一次启动 px4ctrl 加载；`zydauto2.sh` 含自动起飞指令，不应用作仅重启控制器的命令。
+
 
 
 # 使用说明

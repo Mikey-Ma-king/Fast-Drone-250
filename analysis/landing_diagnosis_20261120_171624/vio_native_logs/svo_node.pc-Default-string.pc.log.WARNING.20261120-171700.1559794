@@ -1,0 +1,261 @@
+Log file created at: 2026/11/20 17:17:00
+Running on machine: pc-Default-string
+Log line format: [IWEF]mmdd hh:mm:ss.uuuuuu threadid file:line] msg
+W1120 17:17:00.550444 1565673 frame_handler_base.cpp:1029] 90% updated seeds are unconverged.
+W1120 17:17:00.824645 1565673 frame_handler_base.cpp:1029] 61.1111% updated seeds are unconverged.
+W1120 17:17:00.952797 1565673 frame_handler_base.cpp:1029] 27.2727% updated seeds are unconverged.
+W1120 17:17:01.021296 1565673 frame_handler_base.cpp:1029] 50% updated seeds are unconverged.
+W1120 17:17:01.086977 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:01.154884 1565673 frame_handler_base.cpp:1029] 21.4286% updated seeds are unconverged.
+W1120 17:17:01.224080 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:01.350467 1565673 frame_handler_base.cpp:1029] 50% updated seeds are unconverged.
+W1120 17:17:01.485055 1565673 frame_handler_base.cpp:1029] 81.8182% updated seeds are unconverged.
+W1120 17:17:01.624899 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:01.783501 1565673 frame_handler_base.cpp:1029] 60% updated seeds are unconverged.
+W1120 17:17:01.917801 1565673 frame_handler_base.cpp:1029] 50% updated seeds are unconverged.
+W1120 17:17:02.059273 1565673 frame_handler_base.cpp:1029] 66.6667% updated seeds are unconverged.
+W1120 17:17:02.181681 1565673 frame_handler_base.cpp:1029] 88.8889% updated seeds are unconverged.
+W1120 17:17:02.427040 1565673 frame_handler_base.cpp:1029] 77.2727% updated seeds are unconverged.
+W1120 17:17:02.684506 1565673 frame_handler_base.cpp:1029] 50% updated seeds are unconverged.
+W1120 17:17:03.357924 1565673 frame_handler_base.cpp:1029] 25% updated seeds are unconverged.
+W1120 17:17:03.484076 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:03.621517 1565673 frame_handler_base.cpp:1029] 50% updated seeds are unconverged.
+W1120 17:17:03.753216 1565673 frame_handler_base.cpp:1029] 33.3333% updated seeds are unconverged.
+W1120 17:17:04.053211 1565673 frame_handler_base.cpp:1029] 33.3333% updated seeds are unconverged.
+W1120 17:17:05.594717 1565673 frame_handler_base.cpp:1029] 43.3333% updated seeds are unconverged.
+W1120 17:17:05.601714 1565673 frame_handler_base.cpp:1029] 73.913% updated seeds are unconverged.
+W1120 17:17:05.661969 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:05.665957 1565673 frame_handler_base.cpp:1029] 58.3333% updated seeds are unconverged.
+W1120 17:17:05.697871 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:05.759783 1565673 frame_handler_base.cpp:1029] 88.4615% updated seeds are unconverged.
+W1120 17:17:05.822052 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:05.884996 1565673 frame_handler_base.cpp:1029] 67.5% updated seeds are unconverged.
+W1120 17:17:05.953264 1565673 frame_handler_base.cpp:1029] 65.3061% updated seeds are unconverged.
+W1120 17:17:06.021093 1565673 frame_handler_base.cpp:1029] 66% updated seeds are unconverged.
+W1120 17:17:10.456526 1565673 frame_handler_base.cpp:1029] 58.8235% updated seeds are unconverged.
+W1120 17:17:10.585016 1565673 frame_handler_base.cpp:1029] 81.8182% updated seeds are unconverged.
+W1120 17:17:11.543099 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:11.543412 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:11.543442 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:11.543483 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:11.543609 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:11.543875 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.154155 1565673 frame_handler_base.cpp:1029] 32.3529% updated seeds are unconverged.
+W1120 17:17:17.303697 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:17.365115 1565673 frame_handler_base.cpp:1029] 66.6667% updated seeds are unconverged.
+W1120 17:17:17.526165 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:17.745293 1565673 frame_handler_base.cpp:1029] 85% updated seeds are unconverged.
+W1120 17:17:17.790571 1565673 frame_handler_base.cpp:1029] 88.4615% updated seeds are unconverged.
+W1120 17:17:17.811371 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811412 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811421 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.811444 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811451 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.811527 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811787 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811826 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811843 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811885 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811897 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811968 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.811983 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.812254 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.812496 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.812935 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.857949 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:17.891533 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891603 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891618 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891646 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891654 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.891673 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891707 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891714 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.891738 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891745 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.891757 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891794 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.891801 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.892251 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.892318 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.892326 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:17.892342 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.892407 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.892612 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.933444 1565673 frame_handler_base.cpp:1029] 95.4545% updated seeds are unconverged.
+W1120 17:17:17.963793 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.963932 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:17.986618 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:18.059902 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:18.132830 1565673 frame_handler_base.cpp:1029] 95% updated seeds are unconverged.
+W1120 17:17:18.188591 1565673 frame_handler_base.cpp:1029] 95.6522% updated seeds are unconverged.
+W1120 17:17:18.265729 1565673 frame_handler_base.cpp:1029] 94.4444% updated seeds are unconverged.
+W1120 17:17:18.389607 1565673 frame_handler_base.cpp:1029] 86.6667% updated seeds are unconverged.
+W1120 17:17:18.497443 1565673 frame_handler_base.cpp:1029] 80% updated seeds are unconverged.
+W1120 17:17:18.560626 1565673 frame_handler_base.cpp:1029] 88% updated seeds are unconverged.
+W1120 17:17:18.624368 1565673 frame_handler_base.cpp:1029] 88.8889% updated seeds are unconverged.
+W1120 17:17:18.689632 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:18.764074 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:18.826789 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:18.891654 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:18.957444 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.030542 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.089097 1565673 frame_handler_base.cpp:1029] 96.5517% updated seeds are unconverged.
+W1120 17:17:19.160583 1565673 frame_handler_base.cpp:1029] 95.8333% updated seeds are unconverged.
+W1120 17:17:19.227035 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.288509 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.357060 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.424404 1565673 frame_handler_base.cpp:1029] 95.8333% updated seeds are unconverged.
+W1120 17:17:19.491070 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.561264 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.627517 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.692700 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.776014 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.834777 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.897742 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:19.968959 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.035579 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.096441 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.161687 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.175962 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:20.176013 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:20.176021 1560755 depth_filter.cpp:559] Seed diverged! mu is negative!!
+W1120 17:17:20.176146 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:20.229687 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.290513 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.358753 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.426383 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.493290 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.558509 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.623976 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:20.689273 1565673 frame_handler_base.cpp:1029] 86.3636% updated seeds are unconverged.
+W1120 17:17:20.760113 1565673 frame_handler_base.cpp:1029] 80% updated seeds are unconverged.
+W1120 17:17:20.827594 1565673 frame_handler_base.cpp:1029] 80% updated seeds are unconverged.
+W1120 17:17:20.894276 1565673 frame_handler_base.cpp:1029] 85.1852% updated seeds are unconverged.
+W1120 17:17:20.959223 1565673 frame_handler_base.cpp:1029] 95.8333% updated seeds are unconverged.
+W1120 17:17:21.030292 1565673 frame_handler_base.cpp:1029] 45.9459% updated seeds are unconverged.
+W1120 17:17:21.092015 1565673 frame_handler_base.cpp:1029] 28.8889% updated seeds are unconverged.
+W1120 17:17:23.094986 1565673 frame_handler_base.cpp:1029] 48.2759% updated seeds are unconverged.
+W1120 17:17:23.192773 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:23.193032 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:23.566445 1565673 frame_handler_base.cpp:1029] 50% updated seeds are unconverged.
+W1120 17:17:23.632064 1565673 frame_handler_base.cpp:1029] 59.2593% updated seeds are unconverged.
+W1120 17:17:24.664433 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:24.664546 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:24.664753 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:25.023428 1565673 frame_handler_base.cpp:1029] 34.2105% updated seeds are unconverged.
+W1120 17:17:25.096771 1565673 frame_handler_base.cpp:1029] 75% updated seeds are unconverged.
+W1120 17:17:25.223054 1565673 frame_handler_base.cpp:1029] 96% updated seeds are unconverged.
+W1120 17:17:25.293453 1565673 frame_handler_base.cpp:1029] 74.359% updated seeds are unconverged.
+W1120 17:17:25.360265 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:25.442553 1565673 frame_handler_base.cpp:1029] 92.3077% updated seeds are unconverged.
+W1120 17:17:25.492148 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:25.561553 1565673 frame_handler_base.cpp:1029] 83.3333% updated seeds are unconverged.
+W1120 17:17:29.680608 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:29.744808 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:29.746083 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.427937 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.428263 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.819727 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.819958 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.820016 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.820040 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.820089 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.820318 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.820358 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:30.898350 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:32.967787 1565673 frame_handler_base.cpp:1029] 95.8333% updated seeds are unconverged.
+W1120 17:17:33.036281 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.101313 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.159185 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.231678 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.293622 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.361732 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.428339 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.497543 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:33.564337 1565673 frame_handler_base.cpp:1029] 83.3333% updated seeds are unconverged.
+W1120 17:17:34.427605 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:35.103219 1565673 frame_handler_base.cpp:1029] 26.6667% updated seeds are unconverged.
+W1120 17:17:35.158694 1565673 frame_handler_base.cpp:1029] 41.6667% updated seeds are unconverged.
+W1120 17:17:35.235173 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:35.315872 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:35.363332 1565673 frame_handler_base.cpp:1029] 85.1852% updated seeds are unconverged.
+W1120 17:17:35.502750 1565673 frame_handler_base.cpp:1029] 45.4545% updated seeds are unconverged.
+W1120 17:17:35.563233 1565673 frame_handler_base.cpp:1029] 37.5% updated seeds are unconverged.
+W1120 17:17:35.634899 1565673 frame_handler_base.cpp:1029] 88% updated seeds are unconverged.
+W1120 17:17:35.774206 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:35.911276 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:35.968508 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.047654 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.095281 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.119237 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:36.169332 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.251026 1565673 frame_handler_base.cpp:1029] 76.4706% updated seeds are unconverged.
+W1120 17:17:36.293941 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.360555 1565673 frame_handler_base.cpp:1029] 93.3333% updated seeds are unconverged.
+W1120 17:17:36.433693 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.497917 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.558645 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.634405 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.694509 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.768600 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.829999 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:36.890858 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.032371 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.166342 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.229291 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.298437 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.362453 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.428776 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.493413 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.600095 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.667907 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.731570 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.794147 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.866313 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.926664 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:37.992635 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.062093 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.136471 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.202327 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.260699 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.331674 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.398100 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.438657 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:38.466602 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.534432 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.594301 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.662144 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.729987 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.805997 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.910028 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:38.958971 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.034328 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.103457 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.175170 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.227487 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.298718 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.378922 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.427616 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.496582 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.575733 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.631196 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.692880 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.762588 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.825949 1565673 frame_handler_base.cpp:1029] 87.8788% updated seeds are unconverged.
+W1120 17:17:39.903339 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:39.966602 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:40.423846 1560755 depth_filter.cpp:554] Seed sigma2 is negative!
+W1120 17:17:41.517297 1565673 frame_handler_base.cpp:1029] 54.0541% updated seeds are unconverged.
+W1120 17:17:41.553167 1565673 frame_handler_base.cpp:1029] 97.1429% updated seeds are unconverged.
+W1120 17:17:41.582063 1565673 frame_handler_base.cpp:1029] 94.1176% updated seeds are unconverged.
+W1120 17:17:41.610849 1565673 frame_handler_base.cpp:1029] 93.3333% updated seeds are unconverged.
+W1120 17:17:41.646097 1565673 frame_handler_base.cpp:1029] 88.8889% updated seeds are unconverged.
+W1120 17:17:41.686158 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:41.714026 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:41.720830 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:41.734328 1565673 frame_handler_base.cpp:1029] 100% updated seeds are unconverged.
+W1120 17:17:41.800975 1565673 reprojector.cpp:305] More than 20% matches are unconverged seeds: 67.5%
+W1120 17:17:41.805850 1565673 reprojector.cpp:305] More than 20% matches are unconverged seeds: 50%
+W1120 17:17:41.806319 1565673 frame_handler_base.cpp:1029] 90.9091% updated seeds are unconverged.
+W1120 17:17:41.807365 1565673 frame_handler_base.cpp:1029] 96.4286% updated seeds are unconverged.

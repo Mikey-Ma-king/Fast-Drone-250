@@ -1,0 +1,7 @@
+<launch>
+  <arg name="config" default="$(find quaddock_ours)/config/ours_real.yaml"/>
+  <node pkg="quaddock_ours" type="ours_sw3_node.py" name="ours_sw3_estimator"
+        output="screen" respawn="false">
+    <rosparam command="load" file="$(arg config)"/>
+  </node>
+</launch>

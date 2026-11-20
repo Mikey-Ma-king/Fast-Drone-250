@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
     ros::Subscriber takeoff_sub = nh.subscribe<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land", 10, takeoff_callback);
 
     ros::Subscriber flow_sub =
-        nh.subscribe<flow_publisher::FlowDataMsg>("/flow_data",
+        nh.subscribe<nav_msgs::Odometry>("/flow_data",
                                          100,
                                          boost::bind(&Odom_Data_t::feed2, &fsm.odom_data, _1),
                                          ros::VoidConstPtr(),

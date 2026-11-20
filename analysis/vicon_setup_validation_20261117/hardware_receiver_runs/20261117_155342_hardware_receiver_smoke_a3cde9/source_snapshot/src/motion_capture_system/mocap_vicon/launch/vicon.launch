@@ -1,0 +1,18 @@
+<launch>
+  <!-- Evaluation only. Never remap these outputs into odometry/control inputs. -->
+  <arg name="server_address" default="192.168.39.162"/>
+  <arg name="namespace" default="/evaluation"/>
+  <arg name="frame_rate" default="100"/>
+  <arg name="fixed_frame_id" default="mocap"/>
+  <group ns="$(arg namespace)">
+    <node pkg="mocap_vicon" type="mocap_vicon_node" name="vicon" output="screen">
+      <param name="server_address" value="$(arg server_address)"/>
+      <param name="frame_rate" value="$(arg frame_rate)"/>
+      <param name="max_accel" value="10.0"/>
+      <param name="publish_tf" value="false"/>
+      <param name="fixed_frame_id" value="$(arg fixed_frame_id)"/>
+      <!-- drone00 is the UAV. Receive all subjects until the dog/board name is known. -->
+      <rosparam param="model_list">[]</rosparam>
+    </node>
+  </group>
+</launch>

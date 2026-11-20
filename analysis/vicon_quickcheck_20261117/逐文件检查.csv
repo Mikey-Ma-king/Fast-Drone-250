@@ -1,0 +1,4 @@
+﻿candidate_file,batch_membership,bytes,sha256,raw_message_records,recorded_topics,record_span_s,record_rate_hz,run_duration_s,evaluation_valid_s,vision_outage_count,normal_rmse_m,outage_rmse_m,error_p95_m,recovery_time_s,method,scenario,online_or_replay,vicon_present,usable_for_localization_evaluation,scan_error
+/home/pc/perching_bag/perching_2026-08-29-17-50-42.bag.active,unconfirmed,4117,40886ff8255d9ecd8d87a60d4f17054b3e41653fa367cc342b1815b2432e39d4,0,,,,,0,,,,,,unconfirmed,unconfirmed,unconfirmed,False,False,
+/home/pc/perching_bag/perching_2026-10-21-13-44-02.bag.active,unconfirmed,4117,40886ff8255d9ecd8d87a60d4f17054b3e41653fa367cc342b1815b2432e39d4,0,,,,,0,,,,,,unconfirmed,unconfirmed,unconfirmed,False,False,
+/home/pc/perching_bag/perching_2026-11-16-14-12-20.bag.active,unconfirmed,76285,6ba46ec1973f4bd9dd8fad5368063f847ce1b891cf50f416864cddcad62630b3,92,/flow_data,1.8195085525512695,50.0135049502252,,0,,,,,,unconfirmed,unconfirmed,unconfirmed,False,False,

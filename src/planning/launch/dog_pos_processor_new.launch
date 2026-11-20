@@ -1,0 +1,16 @@
+<launch>
+  <arg name="config" default="$(find quaddock_ours)/config/ours_real.yaml"/>
+  <arg name="alignment_timeout_s" default="0.25"/>
+
+  <!-- Same output-owner node name as the original launch: choose one version. -->
+  <node name="dog_pos_processor" pkg="planning" type="dog_pos_processor_sw3"
+        output="screen" required="true">
+    <param name="sw3_alignment_timeout_s" value="$(arg alignment_timeout_s)"/>
+  </node>
+  <node name="ours_sw3_estimator" pkg="quaddock_ours" type="ours_sw3_node.py"
+        output="screen" required="true">
+    <env name="OPENBLAS_NUM_THREADS" value="1"/>
+    <env name="OMP_NUM_THREADS" value="1"/>
+    <rosparam command="load" file="$(arg config)"/>
+  </node>
+</launch>

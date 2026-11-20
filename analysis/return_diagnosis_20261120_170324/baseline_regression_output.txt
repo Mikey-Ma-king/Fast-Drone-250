@@ -1,0 +1,38 @@
+/usr/include/c++/9/bits/stl_vector.h:1043:34: runtime error: applying non-zero offset 18446744073709551592 to null pointer
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==28==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x55df576f11a7 bp 0x7ffd54049b90 sp 0x7ffd54049b70 T0)
+==28==The signal is caused by a READ memory access.
+==28==Hint: address points to the zero page.
+    #0 0x55df576f11a6 in _mm_loadu_pd /usr/lib/gcc/x86_64-linux-gnu/9/include/emmintrin.h:131
+    #1 0x55df576f11a6 in double __vector(2) Eigen::internal::ploadu<double __vector(2)>(Eigen::internal::unpacket_traits<double __vector(2)>::type const*) /usr/include/eigen3/Eigen/src/Core/arch/SSE/PacketMath.h:336
+    #2 0x55df57707059 in double __vector(2) Eigen::internal::ploadt<double __vector(2), 0>(Eigen::internal::unpacket_traits<double __vector(2)>::type const*) /usr/include/eigen3/Eigen/src/Core/GenericPacketMath.h:465
+    #3 0x55df57707059 in double __vector(2) Eigen::internal::evaluator<Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 1, 0, 3, 1> > >::packet<0, double __vector(2)>(long, long) const /usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:197
+    #4 0x55df5770595b in void Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::assign_op<double, double>, 0>::assignPacket<0, 0, double __vector(2)>(long, long) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:652
+    #5 0x55df57704ea7 in void Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::assign_op<double, double>, 0>::assignPacketByOuterInner<0, 0, double __vector(2)>(long, long) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:666
+    #6 0x55df57703eff in Eigen::internal::copy_using_evaluator_innervec_CompleteUnrolling<Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::assign_op<double, double>, 0>, 0, 2>::run(Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::assign_op<double, double>, 0>&) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:274
+    #7 0x55df57702a3d in Eigen::internal::dense_assignment_loop<Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::assign_op<double, double>, 0>, 3, 2>::run(Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1, 0, 3, 1> >, Eigen::internal::assign_op<double, double>, 0>&) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:434
+    #8 0x55df57700952 in void Eigen::internal::call_dense_assignment_loop<Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::internal::assign_op<double, double> >(Eigen::Matrix<double, 3, 1, 0, 3, 1>&, Eigen::Matrix<double, 3, 1, 0, 3, 1> const&, Eigen::internal::assign_op<double, double> const&) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:741
+    #9 0x55df576ff1b4 in Eigen::internal::Assignment<Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::internal::assign_op<double, double>, Eigen::internal::Dense2Dense, void>::run(Eigen::Matrix<double, 3, 1, 0, 3, 1>&, Eigen::Matrix<double, 3, 1, 0, 3, 1> const&, Eigen::internal::assign_op<double, double> const&) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:879
+    #10 0x55df576fe00d in void Eigen::internal::call_assignment_no_alias<Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::internal::assign_op<double, double> >(Eigen::Matrix<double, 3, 1, 0, 3, 1>&, Eigen::Matrix<double, 3, 1, 0, 3, 1> const&, Eigen::internal::assign_op<double, double> const&) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:836
+    #11 0x55df576fcb9d in void Eigen::internal::call_assignment<Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::internal::assign_op<double, double> >(Eigen::Matrix<double, 3, 1, 0, 3, 1>&, Eigen::Matrix<double, 3, 1, 0, 3, 1> const&, Eigen::internal::assign_op<double, double> const&, Eigen::internal::enable_if<!Eigen::internal::evaluator_assume_aliasing<Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::internal::evaluator_traits<Eigen::Matrix<double, 3, 1, 0, 3, 1> >::Shape>::value, void*>::type) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:804
+    #12 0x55df576fab92 in void Eigen::internal::call_assignment<Eigen::Matrix<double, 3, 1, 0, 3, 1>, Eigen::Matrix<double, 3, 1, 0, 3, 1> >(Eigen::Matrix<double, 3, 1, 0, 3, 1>&, Eigen::Matrix<double, 3, 1, 0, 3, 1> const&) /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:782
+    #13 0x55df576f6eae in Eigen::Matrix<double, 3, 1, 0, 3, 1>& Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 1, 0, 3, 1> >::_set<Eigen::Matrix<double, 3, 1, 0, 3, 1> >(Eigen::DenseBase<Eigen::Matrix<double, 3, 1, 0, 3, 1> > const&) /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:714
+    #14 0x55df576f35ca in Eigen::Matrix<double, 3, 1, 0, 3, 1>::operator=(Eigen::Matrix<double, 3, 1, 0, 3, 1> const&) /usr/include/eigen3/Eigen/src/Core/Matrix.h:208
+    #15 0x55df576ec703 in mpc_callback(ros::TimerEvent const&) /tmp/quaddock_trajectory_test_02w5af2i/test.cpp:88
+    #16 0x55df576edb08 in tick() /tmp/quaddock_trajectory_test_02w5af2i/test.cpp:140
+    #17 0x55df576ee230 in main /tmp/quaddock_trajectory_test_02w5af2i/test.cpp:146
+    #18 0x7f4b0c2d5082 in __libc_start_main ../csu/libc-start.c:308
+    #19 0x55df576ea62d in _start (/tmp/quaddock_trajectory_test_02w5af2i/test+0x3862d)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /usr/lib/gcc/x86_64-linux-gnu/9/include/emmintrin.h:131 in _mm_loadu_pd
+==28==ABORTING
+Traceback (most recent call last):
+  File "src/planning/test/test_mpc_trajectory_bounds.py", line 143, in <module>
+    main()
+  File "src/planning/test/test_mpc_trajectory_bounds.py", line 139, in main
+    subprocess.run([str(binary)], check=True, env=env)
+  File "/usr/lib/python3.8/subprocess.py", line 516, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/tmp/quaddock_trajectory_test_02w5af2i/test']' returned non-zero exit status 1.

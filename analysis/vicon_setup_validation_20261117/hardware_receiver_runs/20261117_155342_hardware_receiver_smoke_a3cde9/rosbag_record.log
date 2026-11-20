@@ -1,0 +1,14 @@
+[ INFO] [1794902023.372363983]: Recording to '/tmp/quaddock_recording_smoke_imm7d1w2/runs/20261117_155342_hardware_receiver_smoke_a3cde9/data_0.bag'.
+[ INFO] [1794902023.373569645]: Subscribing to /rosout_agg
+[ INFO] [1794902023.382557087]: Subscribing to /rosout
+[ INFO] [1794902023.391341384]: Subscribing to /tf
+[ INFO] [1794902023.393684607]: Subscribing to /evaluation/vicon/diagnostics
+[ INFO] [1794902023.396280967]: Subscribing to /evaluation/vicon/dqx_drone2/odom
+[ INFO] [1794902023.399864847]: Subscribing to /evaluation/vicon/dqx_drone2/pose
+[ INFO] [1794902023.401622602]: Subscribing to /evaluation/vicon/genius/odom
+[ INFO] [1794902023.403457497]: Subscribing to /evaluation/vicon/genius/pose
+[ INFO] [1794902023.405731447]: Subscribing to /evaluation/vicon/drone00/odom
+[ INFO] [1794902023.409308275]: Subscribing to /evaluation/vicon/drone00/pose
+[ INFO] [1794902023.411740670]: Subscribing to /quaddock/experiment/metadata
+[ INFO] [1794902023.413855471]: Subscribing to /quaddock/experiment/health
+[ INFO] [1794902023.416402486]: Subscribing to /quaddock/experiment/events

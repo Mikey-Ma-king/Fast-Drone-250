@@ -1,4 +1,5 @@
 #include "input.h"
+#include <cmath>
 
 RC_Data_t::RC_Data_t()
 {
@@ -177,17 +178,22 @@ void Odom_Data_t::feed1(nav_msgs::OdometryConstPtr pMsg)
     one_min_count ++;
 }
 
-void Odom_Data_t::feed2(const boost::shared_ptr<const flow_publisher::FlowDataMsg>& pMsg)
+void Odom_Data_t::feed2(nav_msgs::OdometryConstPtr pMsg)
 {
     if (Odom_State == 2)
         return;
-    ros::Time now = ros::Time::now();
+
+    // The running upixels publisher packs height in metres into position.z.
+    // Its x/y fields are flow integrals, and its Header stamp is currently zero.
+    const double height_m = pMsg->pose.pose.position.z;
+    if (!std::isfinite(height_m) || height_m <= 0.0)
+        return;
 
     msg2 = *pMsg;
-    rcv_stamp = now;
-    recv_new_msg = true;
+    // A height-only message must not make a missing/stale full VIO state fresh.
+    // feed1 remains the owner of rcv_stamp and recv_new_msg.
 
-    p(2) = msg2.ground_distance;
+    p(2) = height_m;
     flow_flag = true;
 
     // q.w() = 1;
